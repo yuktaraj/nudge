@@ -16,6 +16,22 @@ export function supabaseConfig() {
   };
 }
 
+export async function getUserId(request: Request) {
+  const authorization = request.headers.get('Authorization');
+  if (!authorization?.startsWith('Bearer ')) throw new Error('Authentication required.');
+
+  const config = supabaseConfig();
+  const response = await fetch(`${config.url}/auth/v1/user`, {
+    headers: {
+      Authorization: authorization,
+      apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? config.headers.apikey,
+    },
+  });
+  if (!response.ok) throw new Error('Authentication required.');
+  const user = await response.json();
+  return String(user.id);
+}
+
 export async function supabaseFetch<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {}

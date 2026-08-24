@@ -1,5 +1,5 @@
 import { handleOptions, json } from '../_shared/cors.ts';
-import { supabaseFetch } from '../_shared/supabase.ts';
+import { getUserId, supabaseFetch } from '../_shared/supabase.ts';
 
 Deno.serve(async (request) => {
   const options = handleOptions(request);
@@ -7,15 +7,19 @@ Deno.serve(async (request) => {
 
   try {
     const url = new URL(request.url);
+    const userId = await getUserId(request);
     const sourceId = url.searchParams.get('sourceId');
 
     if (!sourceId) {
       const sources = await supabaseFetch<Array<Record<string, unknown>>>(
-        '/rest/v1/sources?select=*&order=created_at.desc'
+        `/rest/v1/sources?user_id=eq.${userId}&select=*&order=created_at.desc`
       );
-      const assets = await supabaseFetch<Array<Record<string, unknown>>>(
-        '/rest/v1/generated_assets?select=*&order=created_at.desc'
-      );
+      const sourceIds = sources.map((source) => String(source.id));
+      const assets = sourceIds.length === 0
+        ? []
+        : await supabaseFetch<Array<Record<string, unknown>>>(
+            `/rest/v1/generated_assets?source_id=in.(${sourceIds.join(',')})&select=*&order=created_at.desc`
+          );
 
       return json({
         assets,
@@ -25,7 +29,7 @@ Deno.serve(async (request) => {
     }
 
     const sources = await supabaseFetch<Array<Record<string, unknown>>>(
-      `/rest/v1/sources?id=eq.${sourceId}&select=*`
+      `/rest/v1/sources?id=eq.${sourceId}&user_id=eq.${userId}&select=*`
     );
     const assets = await supabaseFetch<Array<Record<string, unknown>>>(
       `/rest/v1/generated_assets?source_id=eq.${sourceId}&select=*&order=created_at.desc`

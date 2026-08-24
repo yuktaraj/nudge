@@ -1,5 +1,5 @@
 import { handleOptions, json } from '../_shared/cors.ts';
-import { supabaseConfig, supabaseFetch, updateJob, updateSource } from '../_shared/supabase.ts';
+import { getUserId, supabaseConfig, supabaseFetch, updateJob, updateSource } from '../_shared/supabase.ts';
 
 type SourceRow = {
   id: string;
@@ -38,13 +38,13 @@ function estimateTokens(text: string) {
 function chunkText(text: string) {
   const words = text.replace(/\s+/g, ' ').trim().split(' ');
   const chunks: string[] = [];
-  const wordsPerChunk = 700;
+  const wordsPerChunk = 500;
 
   for (let index = 0; index < words.length; index += wordsPerChunk) {
     chunks.push(words.slice(index, index + wordsPerChunk).join(' '));
   }
 
-  return chunks.filter(Boolean).slice(0, 24);
+  return chunks.filter(Boolean).slice(0, 16);
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -131,7 +131,7 @@ async function callGeminiGenerateContent(
     }
   }
 
-  throw new Error('Gemini is busy right now. Please retry this upload in a few minutes.');
+  throw new Error(`Gemini could not process this source right now: ${lastMessage}`);
 }
 
 async function downloadSource(path: string) {
@@ -184,9 +184,7 @@ async function extractTextWithGemini(source: SourceRow, fileBuffer: ArrayBuffer)
 
   const models = modelCandidates('GEMINI_EXTRACTION_MODEL', 'GEMINI_FALLBACK_MODELS', [
     Deno.env.get('GEMINI_GENERATION_MODEL') ?? '',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
+    'gemini-3.6-flash',
   ]);
   const data = await callGeminiGenerateContent(
     apiKey,
@@ -297,9 +295,7 @@ async function generateStudyPack(source: SourceRow, chunks: string[]): Promise<S
     source.topic ? `Topic: ${source.topic}` : null,
   ].filter(Boolean).join('\n');
   const models = modelCandidates('GEMINI_GENERATION_MODEL', 'GEMINI_FALLBACK_MODELS', [
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
+    'gemini-3.6-flash',
   ]);
   const data = await callGeminiGenerateContent(
     apiKey,
@@ -313,7 +309,7 @@ async function generateStudyPack(source: SourceRow, chunks: string[]): Promise<S
                 `Create a focused study pack from the uploaded source "${source.title}". ` +
                 (sourceContext ? `${sourceContext}\n` : '') +
                 'Use only the provided source text. Prefer active recall, FSRS-friendly flashcards, and concise quiz answers.\n\n' +
-                chunks.join('\n\n---\n\n').slice(0, 80_000),
+                chunks.join('\n\n---\n\n').slice(0, 48_000),
             },
           ],
           role: 'user',
@@ -347,6 +343,8 @@ Deno.serve(async (request) => {
       return json({ error: 'Method not allowed.' }, 405);
     }
 
+    const userId = await getUserId(request);
+
     const body = await request.json();
     sourceId = body.sourceId ?? null;
     if (!sourceId) {
@@ -360,7 +358,7 @@ Deno.serve(async (request) => {
     ]);
     logStage(sourceId, 'extract_text');
 
-    const [source] = await supabaseFetch<SourceRow[]>(`/rest/v1/sources?id=eq.${sourceId}&select=*`);
+    const [source] = await supabaseFetch<SourceRow[]>(`/rest/v1/sources?id=eq.${sourceId}&user_id=eq.${userId}&select=*`);
     if (!source) {
       return json({ error: 'Source not found.' }, 404);
     }

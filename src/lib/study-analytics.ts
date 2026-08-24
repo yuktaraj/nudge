@@ -1,7 +1,7 @@
 import {
-  getDueState,
-  getRetrievability,
-  type ReviewCard,
+    getDueState,
+    getRetrievability,
+    type ReviewCard,
 } from '@/lib/spaced-repetition';
 import type { FocusSessionRecord } from '@/types/study-state';
 
@@ -25,6 +25,10 @@ export function calculateAverageRecall(cards: ReviewCard[], now = new Date()) {
   if (cards.length === 0) return 0;
 
   return cards.reduce((sum, card) => sum + getRetrievability(card, now), 0) / cards.length;
+}
+
+export function calculateCourseRecall(cards: ReviewCard[], course: string, now = new Date()) {
+  return calculateAverageRecall(cards.filter((card) => card.course === course), now);
 }
 
 export function calculateAverageDifficulty(cards: ReviewCard[]) {
@@ -107,6 +111,43 @@ export function detectWeakTopics(cards: ReviewCard[], now = new Date()) {
     .slice(0, 4);
 }
 
+export type ProgressMilestone = {
+  masteredTopics: number;
+  nextMilestone: number | null;
+  percentage: number;
+  totalTopics: number;
+  course: string;
+};
+
+export function buildProgressMilestones(
+  cards: ReviewCard[],
+  now = new Date(),
+  masteryTarget = 80
+): ProgressMilestone[] {
+  const byCourse = new Map<string, ReviewCard[]>();
+
+  for (const card of cards) {
+    byCourse.set(card.course, [...(byCourse.get(card.course) ?? []), card]);
+  }
+
+  return [...byCourse.entries()]
+    .map(([course, courseCards]) => {
+      const topics = buildMasteryByTopic(courseCards, now);
+      const masteredTopics = topics.filter((topic) => topic.value >= masteryTarget).length;
+      const totalTopics = topics.length;
+      const nextMilestone = masteredTopics < totalTopics ? Math.min(totalTopics, masteredTopics + 1) : null;
+
+      return {
+        course,
+        masteredTopics,
+        nextMilestone,
+        percentage: totalTopics === 0 ? 0 : Math.round((masteredTopics / totalTopics) * 100),
+        totalTopics,
+      };
+    })
+    .sort((first, second) => second.percentage - first.percentage);
+}
+
 export function buildReviewLoad(cards: ReviewCard[], now = new Date()) {
   const todayEnd = addDays(startOfDay(now), 1);
   const tomorrowEnd = addDays(startOfDay(now), 2);
@@ -171,4 +212,54 @@ export function getStudyStreak(sessions: FocusSessionRecord[], now = new Date())
   }
 
   return streak;
+}
+
+export type StudyRhythm = {
+  endHour: number;
+  label: string;
+  percentage: number;
+  sessionCount: number;
+  startHour: number;
+};
+
+function formatHour(hour: number) {
+  const date = new Date(2020, 0, 1, hour);
+  return date.toLocaleTimeString(undefined, { hour: 'numeric' });
+}
+
+function formatWindow(startHour: number) {
+  const endHour = (startHour + 2) % 24;
+  return `${formatHour(startHour)}-${formatHour(endHour)}`;
+}
+
+export function detectStudyRhythm(sessions: FocusSessionRecord[]): StudyRhythm | null {
+  const studySessions = sessions.filter((session) => {
+    const date = new Date(session.completedAt);
+    return session.phase === 'study' && !Number.isNaN(date.getTime());
+  });
+  if (studySessions.length === 0) return null;
+
+  const counts = new Map<number, number>();
+  for (const session of studySessions) {
+    const hour = new Date(session.completedAt).getHours();
+    const startHour = Math.floor(hour / 2) * 2;
+    counts.set(startHour, (counts.get(startHour) ?? 0) + 1);
+  }
+
+  const [startHour, sessionCount] = [...counts.entries()].sort((first, second) => second[1] - first[1])[0];
+  return {
+    endHour: (startHour + 2) % 24,
+    label: formatWindow(startHour),
+    percentage: Math.round((sessionCount / studySessions.length) * 100),
+    sessionCount,
+    startHour,
+  };
+}
+
+export function nextStudyRhythmWindow(rhythm: StudyRhythm | null, now = new Date()) {
+  if (!rhythm) return null;
+  const next = new Date(now);
+  next.setHours(rhythm.startHour, 0, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return next;
 }

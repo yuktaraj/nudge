@@ -120,6 +120,29 @@ export function reviewCard(card: ReviewCard, grade: RecallGrade, now = new Date(
   };
 }
 
+export function countTopicAgainGrades(cards: ReviewCard[], topic: string) {
+  return cards
+    .filter((card) => card.topic === topic)
+    .reduce((count, card) => count + card.reviewHistory.filter((item) => item.grade === 'again').length, 0);
+}
+
+export function isHighDifficultyTopic(cards: ReviewCard[], topic: string) {
+  return countTopicAgainGrades(cards, topic) > 3;
+}
+
+// Give repeatedly missed topics a larger stability baseline so their adjusted schedule has room to recover.
+export function applyDifficultyInference(cards: ReviewCard[], topic: string) {
+  if (!isHighDifficultyTopic(cards, topic)) return cards;
+
+  return cards.map((card) => card.topic === topic
+    ? {
+        ...card,
+        difficulty: Math.max(card.difficulty, 7),
+        stability: Number(Math.min(card.stability * 1.15, 365).toFixed(2)),
+      }
+    : card);
+}
+
 // A "study area" is a subject + topic pair. Used to keep queues varied with no repeats.
 export function studyAreaKey(card: ReviewCard) {
   return `${card.course}::${card.topic}`;
@@ -145,6 +168,52 @@ export function dedupeByStudyArea(cards: ReviewCard[]) {
 export const DAILY_REVIEW_MIN_TASKS = 4;
 export const DAILY_REVIEW_MAX_TASKS = 6;
 
+export function daysUntilExam(examDate: string | undefined, now = new Date()) {
+  if (!examDate) return null;
+  const exam = new Date(`${examDate}T23:59:59`);
+  if (Number.isNaN(exam.getTime())) return null;
+  return Math.ceil((exam.getTime() - now.getTime()) / dayMs);
+}
+
+export function isExamProximityMode(examDate: string | undefined, now = new Date()) {
+  const days = daysUntilExam(examDate, now);
+  return days !== null && days >= 0 && days <= 7;
+}
+
+function isNewCard(card: ReviewCard) {
+  return card.reviewHistory.length === 0;
+}
+
+// In the final week, weak and low-retrievability topics outrank untouched cards.
+export function buildExamProximityQueue(
+  cards: ReviewCard[],
+  now = new Date(),
+  maxTasks = DAILY_REVIEW_MAX_TASKS,
+  highYieldTopics: string[] = [],
+  masteryThresholds: Record<string, number> = {},
+  importantTopics: string[] = []
+) {
+  const highYield = new Set(highYieldTopics);
+  const important = new Set(importantTopics);
+  const ranked = [...cards].sort((first, second) => {
+    const firstGoalGap = Math.max(0, (masteryThresholds[first.course] ?? 0) / 100 - getRetrievability(first, now));
+    const secondGoalGap = Math.max(0, (masteryThresholds[second.course] ?? 0) / 100 - getRetrievability(second, now));
+    const firstStabilityRisk = 1 / Math.max(first.stability, 0.25);
+    const secondStabilityRisk = 1 / Math.max(second.stability, 0.25);
+    const firstScore = getRetrievability(first, now) - (getDueState(first, now) ? 0.35 : 0) - (highYield.has(first.topic) ? 0.3 : 0) - (important.has(first.topic) ? 0.35 : 0) - firstGoalGap * 0.45 - firstStabilityRisk * 0.2;
+    const secondScore = getRetrievability(second, now) - (getDueState(second, now) ? 0.35 : 0) - (highYield.has(second.topic) ? 0.3 : 0) - (important.has(second.topic) ? 0.35 : 0) - secondGoalGap * 0.45 - secondStabilityRisk * 0.2;
+    if (firstScore !== secondScore) return firstScore - secondScore;
+    return Number(isNewCard(first)) - Number(isNewCard(second));
+  });
+  const unseen = ranked.filter(isNewCard);
+  const reviewed = ranked.filter((card) => !isNewCard(card));
+  const cappedNew = Math.min(2, Math.max(0, maxTasks - reviewed.length));
+  return dedupeByStudyArea(interleaveReviewQueue([...reviewed, ...unseen.slice(0, cappedNew)], now, highYieldTopics)).slice(
+    0,
+    Math.max(1, maxTasks)
+  );
+}
+
 export function buildDailyReviewQueue(
   cards: ReviewCard[],
   now = new Date(),
@@ -153,8 +222,12 @@ export function buildDailyReviewQueue(
   return dedupeByStudyArea(interleaveReviewQueue(cards, now)).slice(0, Math.max(1, maxTasks));
 }
 
-export function interleaveReviewQueue(cards: ReviewCard[], now = new Date()) {
+export function interleaveReviewQueue(cards: ReviewCard[], now = new Date(), priorityTopics: string[] = []) {
+  const priority = new Set(priorityTopics);
   const dueFirst = [...cards].sort((first, second) => {
+    const firstPriority = priority.has(first.topic) ? 0 : 1;
+    const secondPriority = priority.has(second.topic) ? 0 : 1;
+    if (firstPriority !== secondPriority) return firstPriority - secondPriority;
     const firstDue = getDueState(first, now) ? 0 : 1;
     const secondDue = getDueState(second, now) ? 0 : 1;
     if (firstDue !== secondDue) return firstDue - secondDue;

@@ -1,5 +1,5 @@
 import { handleOptions, json } from '../_shared/cors.ts';
-import { supabaseConfig, supabaseFetch } from '../_shared/supabase.ts';
+import { getUserId, supabaseConfig, supabaseFetch } from '../_shared/supabase.ts';
 
 type SourceRow = {
   id: string;
@@ -20,13 +20,14 @@ Deno.serve(async (request) => {
     }
 
     const body = request.method === 'DELETE' ? Object.fromEntries(new URL(request.url).searchParams) : await request.json();
+    const userId = await getUserId(request);
     const sourceId = String(body.sourceId ?? '').trim();
 
     if (!sourceId) {
       return json({ error: 'sourceId is required.' }, 400);
     }
 
-    const [source] = await supabaseFetch<SourceRow[]>(`/rest/v1/sources?id=eq.${sourceId}&select=id,storage_path`);
+    const [source] = await supabaseFetch<SourceRow[]>(`/rest/v1/sources?id=eq.${sourceId}&user_id=eq.${userId}&select=id,storage_path`);
     if (!source) {
       return json({ deleted: true, sourceId });
     }

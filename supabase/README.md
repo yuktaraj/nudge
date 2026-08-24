@@ -20,6 +20,9 @@ supabase secrets set PARSER_WORKER_URL=http://localhost:8787
 supabase functions deploy create-upload
 supabase functions deploy process-source
 supabase functions deploy get-source-assets
+supabase functions deploy delete-source
+supabase functions deploy create-recovery-code
+supabase functions deploy redeem-recovery-code
 ```
 
 4. Add Expo public config in `.env`.
@@ -29,4 +32,17 @@ EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
-The migration creates the `sources`, `chunks`, `generated_assets`, and `parse_jobs` tables, enables pgvector, creates the `study-materials` bucket, and adds permissive storage policies for the single-user MVP. Add Supabase Auth and RLS before production.
+5. Enable Email auth in Supabase Authentication settings.
+
+6. Apply the ownership migration before deploying the functions:
+
+```sh
+supabase db push
+```
+
+The Edge Functions validate the user's access token and scope sources to that
+user. Existing single-user rows without a `user_id` are intentionally not
+assigned to any account; migrate them manually if they should be retained.
+
+The migrations create the parsing tables, enable pgvector, create the
+`study-materials` bucket, and add ownership policies for authenticated users.

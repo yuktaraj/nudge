@@ -1,14 +1,13 @@
-import {
-  TabList,
-  TabSlot,
-  TabListProps,
-  Tabs,
-  TabTrigger,
-  TabTriggerSlotProps,
-} from 'expo-router/ui';
 import type { Href } from 'expo-router';
-import React from 'react';
-import { Pressable, useWindowDimensions, View, StyleSheet } from 'react-native';
+import {
+    TabList,
+    TabListProps,
+    Tabs,
+    TabSlot,
+    TabTrigger,
+    TabTriggerSlotProps,
+} from 'expo-router/ui';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
@@ -43,6 +42,9 @@ export default function AppTabs() {
           </TabTrigger>
           <TabTrigger name="analytics" href={'/analytics' as Href} asChild>
             <TabButton compact={compact}>{compact ? 'Stats' : 'Analytics'}</TabButton>
+          </TabTrigger>
+          <TabTrigger name="account" href={'/account' as Href} asChild>
+            <TabButton compact={compact}>{compact ? 'You' : 'Account'}</TabButton>
           </TabTrigger>
         </CustomTabList>
       </TabList>

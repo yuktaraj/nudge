@@ -1,10 +1,11 @@
+import { getAuthSession } from '@/lib/auth';
 import { env, hasSupabaseConfig } from '@/lib/env';
 import type {
-  GeneratedAssetContent,
-  GeneratedAssetRecord,
-  PickedStudyFile,
-  SourceRecord,
-  UploadMetadata,
+    GeneratedAssetContent,
+    GeneratedAssetRecord,
+    PickedStudyFile,
+    SourceRecord,
+    UploadMetadata,
 } from '@/types/parsing';
 
 type SourceRow = {
@@ -48,19 +49,18 @@ type CreateUploadResponse = {
 
 function requireConfig() {
   if (!hasSupabaseConfig()) {
-    throw new Error('Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to enable real uploads.');
+    throw new Error('Cloud study processing is unavailable in this build.');
   }
 }
 
-function headers(contentType = 'application/json') {
+async function headers(contentType = 'application/json') {
+  const session = await getAuthSession();
   const nextHeaders: Record<string, string> = {
     'Content-Type': contentType,
     apikey: env.supabaseAnonKey,
   };
 
-  if (env.supabaseAnonKey.includes('.')) {
-    nextHeaders.Authorization = `Bearer ${env.supabaseAnonKey}`;
-  }
+  if (session?.access_token) nextHeaders.Authorization = `Bearer ${session.access_token}`;
 
   return nextHeaders;
 }
@@ -129,7 +129,7 @@ export async function createUpload(file: PickedStudyFile, metadata: UploadMetada
       title,
       topic: metadata.topic,
     }),
-    headers: headers(),
+    headers: await headers(),
     method: 'POST',
   });
 
@@ -148,6 +148,9 @@ export async function uploadOriginal(path: string, file: Blob, mimeType: string)
     headers: {
       'Content-Type': mimeType,
       apikey: env.supabaseAnonKey,
+      ...((await getAuthSession())?.access_token
+        ? { Authorization: `Bearer ${(await getAuthSession())?.access_token}` }
+        : {}),
       'x-upsert': 'false',
     },
     method: 'POST',
@@ -161,7 +164,7 @@ export async function startProcessing(sourceId: string) {
 
   const response = await fetch(functionUrl('process-source'), {
     body: JSON.stringify({ sourceId }),
-    headers: headers(),
+    headers: await headers(),
     method: 'POST',
   });
 
@@ -172,7 +175,7 @@ export async function fetchSourceAssets(sourceId: string) {
   requireConfig();
 
   const response = await fetch(`${functionUrl('get-source-assets')}?sourceId=${encodeURIComponent(sourceId)}`, {
-    headers: headers(),
+    headers: await headers(),
   });
   const data = await readResponse<{ assets: AssetRow[]; source: SourceRow | null }>(response);
 
@@ -186,7 +189,7 @@ export async function fetchAllSourceAssets() {
   requireConfig();
 
   const response = await fetch(functionUrl('get-source-assets'), {
-    headers: headers(),
+    headers: await headers(),
   });
   const data = await readResponse<{ assets: AssetRow[]; sources: SourceRow[] }>(response);
 
@@ -201,7 +204,7 @@ export async function deleteSource(sourceId: string) {
 
   const response = await fetch(functionUrl('delete-source'), {
     body: JSON.stringify({ sourceId }),
-    headers: headers(),
+    headers: await headers(),
     method: 'POST',
   });
 
@@ -212,7 +215,7 @@ export async function listSources() {
   requireConfig();
 
   const response = await fetch(restUrl('sources', 'select=*&order=created_at.desc'), {
-    headers: headers(),
+    headers: await headers(),
   });
   const rows = await readResponse<SourceRow[]>(response);
 
@@ -223,7 +226,7 @@ export async function listGeneratedAssets() {
   requireConfig();
 
   const response = await fetch(restUrl('generated_assets', 'select=*&order=created_at.desc'), {
-    headers: headers(),
+    headers: await headers(),
   });
   const rows = await readResponse<AssetRow[]>(response);
 

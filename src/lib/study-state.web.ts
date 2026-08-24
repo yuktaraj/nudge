@@ -3,7 +3,12 @@ import type { FocusSessionRecord, PersistedStudyState } from '@/types/study-stat
 
 const reviewCardsKey = 'nudge.reviewCards';
 const sessionsKey = 'nudge.focusSessions';
+const examDateKey = 'nudge.examDate';
+const masteryThresholdsKey = 'nudge.masteryThresholds';
+const importantTopicsKey = 'nudge.importantTopics';
 let memoryState: PersistedStudyState = {
+  importantTopics: [],
+  masteryThresholds: {},
   reviewCards: [],
   sessions: [],
 };
@@ -49,7 +54,54 @@ export async function loadFocusSessions(): Promise<FocusSessionRecord[]> {
   return stored.length > 0 ? stored : memoryState.sessions;
 }
 
+export async function saveExamDate(examDate?: string) {
+  memoryState = { ...memoryState, examDate };
+  if (canUseStorage()) {
+    if (examDate) localStorage.setItem(examDateKey, examDate);
+    else localStorage.removeItem(examDateKey);
+  }
+}
+
+export async function loadExamDate(): Promise<string | undefined> {
+  if (!canUseStorage()) return memoryState.examDate;
+  return localStorage.getItem(examDateKey) ?? undefined;
+}
+
+export async function saveMasteryThresholds(masteryThresholds: Record<string, number>) {
+  memoryState = { ...memoryState, masteryThresholds };
+  if (canUseStorage()) localStorage.setItem(masteryThresholdsKey, JSON.stringify(masteryThresholds));
+}
+
+export async function loadMasteryThresholds(): Promise<Record<string, number>> {
+  if (!canUseStorage()) return memoryState.masteryThresholds;
+  try {
+    return JSON.parse(localStorage.getItem(masteryThresholdsKey) ?? '{}') as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+export async function saveImportantTopics(importantTopics: string[]) {
+  memoryState = { ...memoryState, importantTopics };
+  if (canUseStorage()) localStorage.setItem(importantTopicsKey, JSON.stringify(importantTopics));
+}
+
+export async function loadImportantTopics(): Promise<string[]> {
+  if (!canUseStorage()) return memoryState.importantTopics;
+  try {
+    return JSON.parse(localStorage.getItem(importantTopicsKey) ?? '[]') as string[];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadStudyState(): Promise<PersistedStudyState> {
-  const [reviewCards, sessions] = await Promise.all([loadReviewCards(), loadFocusSessions()]);
-  return { reviewCards, sessions };
+  const [reviewCards, sessions, examDate, masteryThresholds, importantTopics] = await Promise.all([
+    loadReviewCards(),
+    loadFocusSessions(),
+    loadExamDate(),
+    loadMasteryThresholds(),
+    loadImportantTopics(),
+  ]);
+  return { examDate, importantTopics, masteryThresholds, reviewCards, sessions };
 }

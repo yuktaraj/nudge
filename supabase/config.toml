@@ -9,3 +9,9 @@ verify_jwt = false
 
 [functions.delete-source]
 verify_jwt = false
+
+[functions.create-recovery-code]
+verify_jwt = false
+
+[functions.redeem-recovery-code]
+verify_jwt = false

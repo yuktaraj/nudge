@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Share, StyleSheet, View } from 'react-native';
 
 import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
@@ -8,16 +8,25 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useAuth } from '@/lib/auth';
 import {
-  dedupeByStudyArea,
-  formatDueDate,
-  getDueState,
-  getRetrievability,
-  interleaveReviewQueue,
-  type ReviewCard,
+    dedupeByStudyArea,
+    formatDueDate,
+    getDueState,
+    getRetrievability,
+    interleaveReviewQueue,
+    type ReviewCard,
 } from '@/lib/spaced-repetition';
-import { calculateDashboardReviewMetrics, detectWeakTopics, getStudyStreak } from '@/lib/study-analytics';
+import {
+    buildProgressMilestones,
+    calculateDashboardReviewMetrics,
+    detectStudyRhythm,
+    detectWeakTopics,
+    getStudyStreak,
+    nextStudyRhythmWindow,
+} from '@/lib/study-analytics';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
+import type { FocusSessionRecord } from '@/types/study-state';
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -32,11 +41,14 @@ function riskMessage(risk: number) {
 export default function DashboardScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { session, signOut } = useAuth();
   const isDark = theme.background === '#07111F';
   const [hasRealMaterials, setHasRealMaterials] = useState(false);
   const [hasReviewState, setHasReviewState] = useState(false);
   const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
+  const [sessions, setSessions] = useState<FocusSessionRecord[]>([]);
   const [studyStreak, setStudyStreak] = useState(0);
+  const now = useMemo(() => new Date(), []);
   const hasStudyPlan = hasRealMaterials || hasReviewState;
   const reviewMetrics = useMemo(
     () => calculateDashboardReviewMetrics(reviewCards),
@@ -57,19 +69,25 @@ export default function DashboardScreen() {
     [reviewCards]
   );
   const weakTopicItems = useMemo(() => detectWeakTopics(reviewCards), [reviewCards]);
+  const progressMilestones = useMemo(() => buildProgressMilestones(reviewCards), [reviewCards]);
+  const featuredMilestone = progressMilestones[0];
+  const studyRhythm = useMemo(() => detectStudyRhythm(sessions), [sessions]);
+  const nextRhythmWindow = useMemo(() => nextStudyRhythmWindow(studyRhythm, now), [now, studyRhythm]);
   const studyBlocks = useMemo(
     () => [
       {
         focus: dueReviewCards[0]?.course ?? 'Add study material',
         label: 'First review',
         state: dueReviewCards[0] ? 'Due' : 'Ready',
-        time: 'Now',
+        time: studyRhythm ? studyRhythm.label : 'Now',
       },
       {
         focus: dueReviewCards[1]?.course ?? 'Read notes',
         label: 'Short recall',
         state: dueReviewCards[1] ? 'Due' : 'Optional',
-        time: 'Later',
+        time: nextRhythmWindow
+          ? nextRhythmWindow.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+          : 'Later',
       },
       {
         focus: dueReviewCards[2]?.course ?? 'Try a quiz',
@@ -78,8 +96,16 @@ export default function DashboardScreen() {
         time: 'Evening',
       },
     ],
-    [dueReviewCards]
+    [dueReviewCards, nextRhythmWindow, studyRhythm]
   );
+
+  async function shareMilestone() {
+    if (!featuredMilestone) return;
+    await Share.share({
+      message: `I’ve mastered ${featuredMilestone.masteredTopics}/${featuredMilestone.totalTopics} ${featuredMilestone.course} topics on Nudge!`,
+      title: 'Nudge progress milestone',
+    });
+  }
 
   useFocusEffect(useCallback(() => {
     let isMounted = true;
@@ -88,6 +114,7 @@ export default function DashboardScreen() {
       setHasRealMaterials(sources.some((source) => !source.id.startsWith('fixture-')));
       setHasReviewState(nextCards.length > 0);
       setReviewCards(nextCards);
+      setSessions(sessions);
       setStudyStreak(getStudyStreak(sessions));
     });
 
@@ -127,6 +154,16 @@ export default function DashboardScreen() {
               label={hasStudyPlan ? 'Add material' : 'See study tools'}
               variant="secondary"
               onPress={() => router.push(hasStudyPlan ? '/library' : '/assets')}
+            />
+            <ActionButton
+              label={`Sign out${session?.user.email ? ` (${session.user.email})` : ''}`}
+              variant="secondary"
+              onPress={signOut}
+            />
+            <ActionButton
+              label="Account & Sync"
+              variant="secondary"
+              onPress={() => router.push('/account')}
             />
           </View>
         </StudyCard>
@@ -182,7 +219,12 @@ export default function DashboardScreen() {
         </StudyCard>
 
         <StudyCard style={[styles.column, styles.playfulPanelAlt, isDark && styles.playfulPanelAltDark]}>
-          <SectionHeader title="Study Blocks" detail="A gentle plan for the day." />
+          <SectionHeader
+            title="Study Blocks"
+            detail={studyRhythm
+              ? `You study ${studyRhythm.percentage}% of sessions between ${studyRhythm.label}.`
+              : 'Complete a focus block to learn your best study window.'}
+          />
           {studyBlocks.map((block) => (
             <ThemedView key={block.label} type="backgroundElement" style={styles.blockRow}>
               <ThemedText type="smallBold">{block.time}</ThemedText>
@@ -199,6 +241,23 @@ export default function DashboardScreen() {
           ))}
         </StudyCard>
       </View>
+
+      {featuredMilestone ? (
+        <StudyCard style={[styles.milestoneCard, isDark && styles.milestoneCardDark]}>
+          <View style={styles.milestoneCopy}>
+            <ThemedText type="caption" style={{ color: theme.primary }}>Progress milestone</ThemedText>
+            <ThemedText type="subtitle">
+              You’ve mastered {featuredMilestone.masteredTopics}/{featuredMilestone.totalTopics} {featuredMilestone.course} topics!
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {featuredMilestone.nextMilestone
+                ? `${featuredMilestone.nextMilestone - featuredMilestone.masteredTopics} topic${featuredMilestone.nextMilestone - featuredMilestone.masteredTopics === 1 ? '' : 's'} until your next milestone.`
+                : 'Every topic in this course has reached the mastery threshold.'}
+            </ThemedText>
+          </View>
+          <ActionButton label="Share badge" onPress={shareMilestone} />
+        </StudyCard>
+      ) : null}
 
       <View style={styles.grid}>
         <StudyCard style={[styles.column, styles.playfulPanelAlt, isDark && styles.playfulPanelAltDark]}>
@@ -353,5 +412,24 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     gap: Spacing.one,
     padding: Spacing.four,
+  },
+  milestoneCard: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(232, 185, 74, 0.2)',
+    borderColor: '#E8B94A',
+    borderRadius: 24,
+    borderWidth: 2,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.three,
+    justifyContent: 'space-between',
+  },
+  milestoneCardDark: {
+    backgroundColor: 'rgba(232, 185, 74, 0.12)',
+  },
+  milestoneCopy: {
+    flex: 1,
+    gap: Spacing.one,
+    minWidth: 220,
   },
 });

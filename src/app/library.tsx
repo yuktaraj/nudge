@@ -1,18 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { hasSupabaseConfig } from '@/lib/env';
 import { listCachedAssets, listCachedSources, removeCachedSource } from '@/lib/parsing/cache';
 import { pickStudyFiles } from '@/lib/parsing/document-picker';
 import { refreshParsingState, uploadAndProcessFiles } from '@/lib/parsing/pipeline';
 import { deleteSource, startProcessing } from '@/lib/parsing/supabase-api';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
 
 const commonSubjects = [
@@ -211,7 +211,7 @@ export default function LibraryScreen() {
   const [uploadMessage, setUploadMessage] = useState(
     hasSupabaseConfig()
       ? 'Ready for PDFs, slides, docs, or notes.'
-      : 'Connect Supabase to upload files.'
+      : 'Local study mode is ready. Cloud imports are unavailable in this build.'
   );
 
   const loadLocal = useCallback(async () => {
@@ -314,14 +314,18 @@ export default function LibraryScreen() {
   }
 
   async function chooseFiles() {
-    if (!hasSupabaseConfig()) {
-      setUploadMessage('Connect Supabase first, then restart the app.');
-      return;
-    }
-
     setIsBusy(true);
     try {
       const files = await pickStudyFiles();
+      if (!hasSupabaseConfig()) {
+        setUploadMessage(
+          files.length > 0
+            ? `Selected ${files.length} file${files.length === 1 ? '' : 's'}. Cloud parsing is unavailable in local-only mode.`
+            : 'No files selected.'
+        );
+        return;
+      }
+
       const textFile = makeTextFile();
       const uploadFiles = textFile ? [...files, textFile] : files;
       const uploadTitle = buildStudyTitle(subject, topic);
@@ -361,7 +365,7 @@ export default function LibraryScreen() {
 
   async function retrySource(sourceId: string) {
     if (!hasSupabaseConfig()) {
-      setUploadMessage('Connect Supabase first, then restart the app.');
+      setUploadMessage('Cloud processing is unavailable right now. Your saved materials are still available.');
       return;
     }
 

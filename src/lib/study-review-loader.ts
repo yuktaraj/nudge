@@ -1,9 +1,9 @@
-import { buildReviewCardsFromGeneratedAssets, mergeReviewCardsWithGeneratedCards } from '@/lib/generated-review-cards';
 import { hasSupabaseConfig } from '@/lib/env';
+import { buildReviewCardsFromGeneratedAssets, mergeReviewCardsWithGeneratedCards } from '@/lib/generated-review-cards';
 import { listCachedAssets, listCachedSources } from '@/lib/parsing/cache';
 import { refreshParsingState } from '@/lib/parsing/pipeline';
 import type { ReviewCard } from '@/lib/spaced-repetition';
-import { loadFocusSessions, loadReviewCards, saveReviewCards } from '@/lib/study-state';
+import { loadExamDate, loadFocusSessions, loadImportantTopics, loadMasteryThresholds, loadReviewCards, saveReviewCards } from '@/lib/study-state';
 import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
 import type { FocusSessionRecord } from '@/types/study-state';
 
@@ -52,16 +52,22 @@ async function loadSourcesAndAssets() {
 
 export type StudyReviewState = {
   assets: GeneratedAssetRecord[];
+  examDate?: string;
+  importantTopics: string[];
+  masteryThresholds: Record<string, number>;
   reviewCards: ReviewCard[];
   sessions: FocusSessionRecord[];
   sources: SourceRecord[];
 };
 
 export async function loadStudyReviewState(): Promise<StudyReviewState> {
-  const [{ assets, sources }, savedCards, sessions] = await Promise.all([
+  const [{ assets, sources }, savedCards, sessions, examDate, masteryThresholds, importantTopics] = await Promise.all([
     loadSourcesAndAssets(),
     loadReviewCards(),
     loadFocusSessions(),
+    loadExamDate(),
+    loadMasteryThresholds(),
+    loadImportantTopics(),
   ]);
   const cleanedSavedCards = removeLegacyDemoReviewCards(savedCards);
   const generatedCards = buildReviewCardsFromGeneratedAssets(assets, sources);
@@ -76,6 +82,9 @@ export async function loadStudyReviewState(): Promise<StudyReviewState> {
 
   return {
     assets,
+    examDate,
+    importantTopics,
+    masteryThresholds,
     reviewCards,
     sessions,
     sources,

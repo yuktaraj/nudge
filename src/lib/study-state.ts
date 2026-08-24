@@ -14,6 +14,8 @@ type SQLiteModule = {
 let sqliteModulePromise: Promise<SQLiteModule | null> | null = null;
 let dbPromise: Promise<SQLiteDatabase | null> | null = null;
 let memoryState: PersistedStudyState = {
+  importantTopics: [],
+  masteryThresholds: {},
   reviewCards: [],
   sessions: [],
 };
@@ -49,6 +51,10 @@ async function getDatabase() {
           minutes INTEGER NOT NULL,
           completed_at TEXT NOT NULL,
           note TEXT
+        );
+        CREATE TABLE IF NOT EXISTS study_settings (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT
         );
       `);
 
@@ -137,7 +143,90 @@ export async function loadFocusSessions(): Promise<FocusSessionRecord[]> {
   }));
 }
 
+export async function saveExamDate(examDate?: string) {
+  memoryState = { ...memoryState, examDate };
+  const db = await getDatabase();
+  if (!db) return;
+
+  await db.runAsync(
+    'INSERT OR REPLACE INTO study_settings (key, value) VALUES (?, ?)',
+    'examDate',
+    examDate ?? null
+  );
+}
+
+export async function loadExamDate(): Promise<string | undefined> {
+  const db = await getDatabase();
+  if (!db) return memoryState.examDate;
+
+  const rows = await db.getAllAsync<{ value: string | null }>(
+    'SELECT value FROM study_settings WHERE key = ?',
+    'examDate'
+  );
+  return rows[0]?.value ?? undefined;
+}
+
+export async function saveMasteryThresholds(masteryThresholds: Record<string, number>) {
+  memoryState = { ...memoryState, masteryThresholds };
+  const db = await getDatabase();
+  if (!db) return;
+
+  await db.runAsync(
+    'INSERT OR REPLACE INTO study_settings (key, value) VALUES (?, ?)',
+    'masteryThresholds',
+    JSON.stringify(masteryThresholds)
+  );
+}
+
+export async function loadMasteryThresholds(): Promise<Record<string, number>> {
+  const db = await getDatabase();
+  if (!db) return memoryState.masteryThresholds;
+
+  const rows = await db.getAllAsync<{ value: string | null }>(
+    'SELECT value FROM study_settings WHERE key = ?',
+    'masteryThresholds'
+  );
+  try {
+    return rows[0]?.value ? JSON.parse(rows[0].value) as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveImportantTopics(importantTopics: string[]) {
+  memoryState = { ...memoryState, importantTopics };
+  const db = await getDatabase();
+  if (!db) return;
+
+  await db.runAsync(
+    'INSERT OR REPLACE INTO study_settings (key, value) VALUES (?, ?)',
+    'importantTopics',
+    JSON.stringify(importantTopics)
+  );
+}
+
+export async function loadImportantTopics(): Promise<string[]> {
+  const db = await getDatabase();
+  if (!db) return memoryState.importantTopics;
+
+  const rows = await db.getAllAsync<{ value: string | null }>(
+    'SELECT value FROM study_settings WHERE key = ?',
+    'importantTopics'
+  );
+  try {
+    return rows[0]?.value ? JSON.parse(rows[0].value) as string[] : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function loadStudyState(): Promise<PersistedStudyState> {
-  const [reviewCards, sessions] = await Promise.all([loadReviewCards(), loadFocusSessions()]);
-  return { reviewCards, sessions };
+  const [reviewCards, sessions, examDate, masteryThresholds, importantTopics] = await Promise.all([
+    loadReviewCards(),
+    loadFocusSessions(),
+    loadExamDate(),
+    loadMasteryThresholds(),
+    loadImportantTopics(),
+  ]);
+  return { examDate, importantTopics, masteryThresholds, reviewCards, sessions };
 }

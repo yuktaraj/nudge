@@ -10,6 +10,9 @@ export type FocusSessionRecord = {
 };
 
 export type PersistedStudyState = {
+  examDate?: string;
+  importantTopics: string[];
+  masteryThresholds: Record<string, number>;
   reviewCards: ReviewCard[];
   sessions: FocusSessionRecord[];
 };

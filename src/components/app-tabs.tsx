@@ -1,5 +1,4 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import React from 'react';
 
 import { useTheme } from '@/hooks/use-theme';
 
@@ -54,6 +53,14 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Badge selectedBackgroundColor={colors.brandPink}>
           26
         </NativeTabs.Trigger.Badge>
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="account">
+        <NativeTabs.Trigger.Label>Account</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }}
+          md="account_circle"
+        />
       </NativeTabs.Trigger>
     </NativeTabs>
   );
