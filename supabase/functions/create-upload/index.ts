@@ -13,6 +13,20 @@ const supportedMimeTypes = new Set([
   'text/plain',
 ]);
 
+// Helper to extract the user's UUID from their token
+function getUserIdFromAuth(authHeader: string | null): string | null {
+  if (!authHeader) return null;
+  try {
+    const token = authHeader.replace('Bearer ', '');
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub || null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (request) => {
   const options = handleOptions(request);
   if (options) return options;
@@ -20,6 +34,16 @@ Deno.serve(async (request) => {
   try {
     if (request.method !== 'POST') {
       return json({ error: 'Method not allowed.' }, 405);
+    }
+
+    // DEBUG: Log the auth header
+    const authHeader = request.headers.get('Authorization');
+    const userId = getUserIdFromAuth(authHeader);
+    console.log("DEBUG: Auth Header present:", !!authHeader);
+    console.log("DEBUG: Extracted User ID:", userId);
+
+    if (!userId) {
+      return json({ error: 'Unauthorized. Missing or invalid user token.' }, 401);
     }
 
     const body = await request.json();
@@ -35,6 +59,8 @@ Deno.serve(async (request) => {
 
     const sourceId = crypto.randomUUID();
     const storagePath = `sources/${sourceId}/original`;
+    
+    // Insert with ALL fields included
     const [source] = await supabaseFetch<Array<Record<string, unknown>>>('/rest/v1/sources', {
       headers: { Prefer: 'return=representation' },
       json: {
@@ -48,6 +74,7 @@ Deno.serve(async (request) => {
         subject,
         title,
         topic,
+        user_id: userId, // The critical fix!
       },
       method: 'POST',
     });
@@ -71,6 +98,7 @@ Deno.serve(async (request) => {
       },
     });
   } catch (error) {
+    console.error("DEBUG: Error caught:", error);
     return json({ error: error instanceof Error ? error.message : 'Could not create upload.' }, 500);
   }
 });

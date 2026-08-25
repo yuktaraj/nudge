@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
@@ -18,6 +18,7 @@ import {
 } from '@/lib/spaced-repetition';
 import { calculateDashboardReviewMetrics, detectWeakTopics, getStudyStreak } from '@/lib/study-analytics';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
+import { supabase } from '@/lib/supabase';
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
@@ -33,15 +34,22 @@ export default function DashboardScreen() {
   const theme = useTheme();
   const router = useRouter();
   const isDark = theme.background === '#07111F';
+  
+  // Added a loading state to prevent the dashboard from flashing before the redirect
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  
   const [hasRealMaterials, setHasRealMaterials] = useState(false);
   const [hasReviewState, setHasReviewState] = useState(false);
   const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
   const [studyStreak, setStudyStreak] = useState(0);
+  
   const hasStudyPlan = hasRealMaterials || hasReviewState;
+  
   const reviewMetrics = useMemo(
     () => calculateDashboardReviewMetrics(reviewCards),
     [reviewCards]
   );
+  
   const dueReviewCards = useMemo(
     () =>
       reviewCards
@@ -50,13 +58,14 @@ export default function DashboardScreen() {
         .slice(0, 3),
     [reviewCards]
   );
-  // Today's queue: a varied mix of distinct subjects/topics from the uploads, due cards
-  // first, with no repeated study area.
+
   const todaysQueue = useMemo(
     () => dedupeByStudyArea(interleaveReviewQueue(reviewCards)).slice(0, 4),
     [reviewCards]
   );
+  
   const weakTopicItems = useMemo(() => detectWeakTopics(reviewCards), [reviewCards]);
+  
   const studyBlocks = useMemo(
     () => [
       {
@@ -83,18 +92,43 @@ export default function DashboardScreen() {
 
   useFocusEffect(useCallback(() => {
     let isMounted = true;
-    loadStudyReviewState().then(({ reviewCards: nextCards, sessions, sources }) => {
+
+    // Check if the user is logged in
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (!isMounted) return;
-      setHasRealMaterials(sources.some((source) => !source.id.startsWith('fixture-')));
-      setHasReviewState(nextCards.length > 0);
-      setReviewCards(nextCards);
-      setStudyStreak(getStudyStreak(sessions));
+
+      // If no session exists, send them to login immediately
+      if (!session) {
+        router.replace('/login');
+        return;
+      }
+
+      // If logged in, turn off the loading screen
+      setIsCheckingAuth(false);
+
+      // Fetch their study materials
+      loadStudyReviewState().then(({ reviewCards: nextCards, sessions, sources }) => {
+        if (!isMounted) return;
+        setHasRealMaterials(sources.some((source) => !source.id.startsWith('fixture-')));
+        setHasReviewState(nextCards.length > 0);
+        setReviewCards(nextCards);
+        setStudyStreak(getStudyStreak(sessions));
+      });
     });
 
     return () => {
       isMounted = false;
     };
   }, []));
+
+  // If we are still checking if they are logged in, show a loading screen instead of the dashboard
+  if (isCheckingAuth) {
+    return (
+      <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
+    );
+  }
 
   return (
     <StudyScreen
@@ -237,6 +271,11 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   heroGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

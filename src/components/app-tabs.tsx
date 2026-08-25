@@ -55,6 +55,14 @@ export default function AppTabs() {
           26
         </NativeTabs.Trigger.Badge>
       </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="profile">
+        <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'person', selected: 'person.fill' }}
+          md="person"
+        />
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
