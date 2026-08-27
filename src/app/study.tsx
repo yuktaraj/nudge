@@ -2,13 +2,14 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 
-import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { formatTimerTime, sessionModes, useFocusTimer } from '@/components/focus-timer-controller';
+import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { buildExamProximityQueue, getExamDaysRemaining, loadExamPlan, type ExamPlan } from '@/lib/exam-proximity';
 import { dedupeByStudyArea, interleaveReviewQueue, type ReviewCard } from '@/lib/spaced-repetition';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
 import { loadFocusSessions } from '@/lib/study-state';
@@ -22,8 +23,11 @@ const planTemplates: Array<(card: ReviewCard) => string> = [
   (card) => `Try a ${card.topic} quiz`,
 ];
 
-function buildSessionPlan(cards: ReviewCard[]) {
-  const areas = dedupeByStudyArea(interleaveReviewQueue(cards));
+function buildSessionPlan(cards: ReviewCard[], examPlan: ExamPlan | null) {
+  const isExamMode = examPlan && getExamDaysRemaining(examPlan) !== null;
+  const areas = isExamMode
+    ? buildExamProximityQueue(cards, examPlan)
+    : dedupeByStudyArea(interleaveReviewQueue(cards));
   if (areas.length === 0) {
     return [
       'Upload a PDF, slides, or notes to build a plan',
@@ -32,6 +36,9 @@ function buildSessionPlan(cards: ReviewCard[]) {
     ];
   }
 
+  if (isExamMode) {
+    return areas.map((card) => `Try a mixed ${card.topic} quiz`);
+  }
   return planTemplates.map((template, index) => template(areas[index % areas.length]));
 }
 
@@ -62,10 +69,11 @@ export default function StudySessionScreen() {
   } = useFocusTimer();
   const [sessionLog, setSessionLog] = useState<FocusSessionRecord[]>([]);
   const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
+  const [examPlan, setExamPlan] = useState<ExamPlan | null>(null);
   const [note, setNote] = useState('');
   const nextPhaseLabel = phase === 'study' ? 'break' : 'next focus block';
   const isDark = theme.background === '#07111F';
-  const sessionPlan = useMemo(() => buildSessionPlan(reviewCards), [reviewCards]);
+  const sessionPlan = useMemo(() => buildSessionPlan(reviewCards, examPlan), [examPlan, reviewCards]);
 
   useEffect(() => {
     let isMounted = true;
@@ -86,6 +94,9 @@ export default function StudySessionScreen() {
 
       loadStudyReviewState().then(({ reviewCards: nextCards }) => {
         if (isMounted) setReviewCards(nextCards);
+      });
+      loadExamPlan().then((plan) => {
+        if (isMounted) setExamPlan(plan);
       });
 
       return () => {

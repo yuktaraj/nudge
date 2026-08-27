@@ -1,7 +1,7 @@
 import {
-  getDueState,
-  getRetrievability,
-  type ReviewCard,
+    getDueState,
+    getRetrievability,
+    type ReviewCard,
 } from '@/lib/spaced-repetition';
 import type { FocusSessionRecord } from '@/types/study-state';
 
@@ -83,16 +83,52 @@ export function buildMasteryByTopic(cards: ReviewCard[], now = new Date()) {
   return [...topics.entries()]
     .map(([topic, topicCards]) => ({
       cards: topicCards.length,
+      course: topicCards[0]?.course ?? 'General',
       topic,
       value: topicMasteryScore(topicCards, now),
     }))
     .sort((first, second) => second.value - first.value);
 }
 
+export function buildProgressMilestones(cards: ReviewCard[], now = new Date(), threshold = 80) {
+  const subjects = new Map<string, ReviewCard[]>();
+
+  for (const card of cards) {
+    subjects.set(card.course, [...(subjects.get(card.course) ?? []), card]);
+  }
+
+  return [...subjects.entries()]
+    .map(([course, subjectCards]) => {
+      const topics = buildMasteryByTopic(subjectCards, now);
+      const masteredTopics = topics.filter((topic) => topic.value >= threshold).length;
+      const badge = masteredTopics >= topics.length && topics.length > 0
+        ? 'Mastery complete'
+        : masteredTopics >= Math.ceil(topics.length * 0.75)
+          ? 'Nearly there'
+          : masteredTopics >= Math.ceil(topics.length * 0.5)
+            ? 'Halfway strong'
+            : 'Getting started';
+      const message = masteredTopics >= topics.length && topics.length > 0
+        ? `You’ve mastered all ${topics.length} ${course} topics!`
+        : masteredTopics === 0
+          ? `Your ${course} progress is just getting started: 0/${topics.length} topics at mastery level.`
+          : `${masteredTopics}/${topics.length} ${course} topics are at mastery level. Keep going!`;
+
+      return {
+        badge,
+        course,
+        message,
+        masteredTopics,
+        totalTopics: topics.length,
+      };
+    })
+    .sort((first, second) => second.masteredTopics / Math.max(second.totalTopics, 1) - first.masteredTopics / Math.max(first.totalTopics, 1));
+}
+
 export function detectWeakTopics(cards: ReviewCard[], now = new Date()) {
   return buildMasteryByTopic(cards, now)
     .map((topic) => {
-      const topicCards = cards.filter((card) => card.topic === topic.topic);
+      const topicCards = cards.filter((card) => card.topic === topic.topic && card.course === topic.course);
       const overdue = topicCards.filter((card) => new Date(card.dueAt).getTime() <= now.getTime()).length;
       const averageDifficulty = calculateAverageDifficulty(topicCards);
 

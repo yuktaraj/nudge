@@ -7,16 +7,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import type { ReviewCard } from '@/lib/spaced-repetition';
 import {
-  buildMasteryByTopic,
-  buildRetentionCurve,
-  buildReviewLoad,
-  buildSessionConsistency,
-  detectWeakTopics,
-  getStudyStreak,
+    buildMasteryByTopic,
+    buildRetentionCurve,
+    buildReviewLoad,
+    buildSessionConsistency,
+    detectWeakTopics,
+    getStudyStreak,
 } from '@/lib/study-analytics';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
-import type { ReviewCard } from '@/lib/spaced-repetition';
 import type { FocusSessionRecord } from '@/types/study-state';
 
 const accentColors = ['#ff4d8b', '#b8a4ed', '#e8b94a', '#a4d4c5', '#60A5FA'];
@@ -159,11 +159,11 @@ export default function AnalyticsScreen() {
           <SectionHeader title="Mastery by Topic" detail="Based on recall, stability, and difficulty." />
           {masteryByTopic.length > 0 ? (
             masteryByTopic.map((item, index) => (
-              <View key={item.topic} style={styles.masteryRow}>
+              <View key={`${item.course}-${item.topic}`} style={styles.masteryRow}>
                 <View style={styles.masteryLabel}>
                   <ThemedText type="smallBold">{item.topic}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {item.value}%
+                    {item.course} - {item.value}%
                   </ThemedText>
                 </View>
                 <ThemedView type="backgroundElement" style={styles.progressTrack}>
@@ -193,12 +193,12 @@ export default function AnalyticsScreen() {
           <SectionHeader title="Weak Topics" detail="Practice these soon." />
           {weakTopics.length > 0 ? (
             weakTopics.map((item, index) => (
-              <ThemedView key={item.topic} type="backgroundElement" style={styles.weakRow}>
+              <ThemedView key={`${item.course}-${item.topic}`} type="backgroundElement" style={styles.weakRow}>
                 <View style={[styles.riskDot, { backgroundColor: accentColors[index % accentColors.length] }]} />
                 <View style={styles.flexCopy}>
                   <ThemedText type="smallBold">{item.topic}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {item.overdue} due - difficulty {item.averageDifficulty.toFixed(1)}
+                    {item.course} - {item.overdue} due - difficulty {item.averageDifficulty.toFixed(1)}
                   </ThemedText>
                 </View>
                 <ThemedText type="smallBold">{item.risk}</ThemedText>

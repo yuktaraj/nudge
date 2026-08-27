@@ -1,18 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { hasSupabaseConfig } from '@/lib/env';
 import { listCachedAssets, listCachedSources, removeCachedSource } from '@/lib/parsing/cache';
 import { pickStudyFiles } from '@/lib/parsing/document-picker';
 import { refreshParsingState, uploadAndProcessFiles } from '@/lib/parsing/pipeline';
 import { deleteSource, startProcessing } from '@/lib/parsing/supabase-api';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
 
 const commonSubjects = [
@@ -174,12 +174,13 @@ function mergeRemoteWithLocalDiagnostics(remoteSources: SourceRecord[], localSou
 
   return dedupeSources(remoteSources.map((remoteSource) => {
     const localSource = localById.get(remoteSource.id);
-    if (
-      localSource?.status === 'failed' &&
-      localSource.error &&
-      (remoteSource.status === 'queued' || remoteSource.status === 'uploading')
-    ) {
-      return localSource;
+    if (localSource?.status === 'failed' && localSource.error && remoteSource.status !== 'ready' && !remoteSource.error) {
+      return {
+        ...remoteSource,
+        error: localSource.error,
+        stage: 'failed',
+        status: 'failed',
+      };
     }
 
     return remoteSource;
@@ -313,7 +314,7 @@ export default function LibraryScreen() {
     };
   }
 
-  async function chooseFiles() {
+  async function chooseFiles(includeFilePicker = true) {
     if (!hasSupabaseConfig()) {
       setUploadMessage('Connect Supabase first, then restart the app.');
       return;
@@ -321,7 +322,7 @@ export default function LibraryScreen() {
 
     setIsBusy(true);
     try {
-      const files = await pickStudyFiles();
+      const files = includeFilePicker ? await pickStudyFiles() : [];
       const textFile = makeTextFile();
       const uploadFiles = textFile ? [...files, textFile] : files;
       const uploadTitle = buildStudyTitle(subject, topic);
@@ -350,6 +351,9 @@ export default function LibraryScreen() {
           : `${uploadFiles.length} source${uploadFiles.length === 1 ? '' : 's'} uploaded and queued.`
       );
       if (failedResults.length === 0) {
+        if (!includeFilePicker && textFile) {
+          setPastedText('');
+        }
         await refresh();
       }
     } catch (error) {
@@ -535,6 +539,12 @@ export default function LibraryScreen() {
               label={isBusy ? 'Uploading...' : 'Choose file'}
               onPress={chooseFiles}
             />
+            <ActionButton
+              label="Upload pasted notes"
+              variant="secondary"
+              disabled={isBusy || pastedText.trim().length < 50}
+              onPress={() => chooseFiles(false)}
+            />
             <ActionButton label="Refresh" variant="secondary" onPress={refresh} />
           </View>
           <ActionButton
@@ -654,18 +664,20 @@ export default function LibraryScreen() {
                     {sourceAssets.quizzes} quizzes
                   </ThemedText>
                 </View>
-                {(source.status === 'failed' || source.status === 'needs_ocr') && (
+                <View style={styles.sourceActions}>
+                  {(source.status === 'failed' || source.status === 'needs_ocr') && (
+                    <ActionButton
+                      label={source.status === 'needs_ocr' ? 'Retry OCR' : 'Retry'}
+                      variant="secondary"
+                      onPress={() => retrySource(source.id)}
+                    />
+                  )}
                   <ActionButton
-                    label={source.status === 'needs_ocr' ? 'Retry OCR' : 'Retry'}
+                    label="Delete"
                     variant="secondary"
-                    onPress={() => retrySource(source.id)}
+                    onPress={() => removeSource(source.id)}
                   />
-                )}
-                <ActionButton
-                  label="Delete"
-                  variant="secondary"
-                  onPress={() => removeSource(source.id)}
-                />
+                </View>
               </View>
             </ThemedView>
           );
@@ -842,6 +854,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     flexDirection: 'column',
     gap: Spacing.one,
+  },
+  sourceActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
   },
   emptyState: {
     borderRadius: 22,

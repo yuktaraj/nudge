@@ -27,3 +27,17 @@ declare module 'expo-sqlite' {
 
   export function openDatabaseAsync(name: string): Promise<SQLiteDatabase>;
 }
+
+declare module '@react-native-community/datetimepicker' {
+  import type { DateTimePickerEvent } from 'react-native';
+
+  export type DateTimePickerProps = {
+    value: Date;
+    mode?: 'date' | 'time' | 'datetime';
+    display?: 'default' | 'spinner' | 'calendar' | 'clock' | 'compact' | 'inline';
+    minimumDate?: Date;
+    onChange?: (event: DateTimePickerEvent, date?: Date) => void;
+  };
+
+  export default function DateTimePicker(props: DateTimePickerProps): React.ReactElement;
+}

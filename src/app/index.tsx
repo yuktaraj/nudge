@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, Share, StyleSheet, View } from 'react-native';
 
 import { ActionButton, SectionHeader, StudyCard } from '@/components/study-card';
 import { StudyScreen } from '@/components/study-screen';
@@ -8,15 +8,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { buildCombinedExamQueue, getExamDaysRemaining, getSubjectRecall, loadExamPlans, type ExamPlan } from '@/lib/exam-proximity';
 import {
-  dedupeByStudyArea,
-  formatDueDate,
-  getDueState,
-  getRetrievability,
-  interleaveReviewQueue,
-  type ReviewCard,
+    dedupeByStudyArea,
+    formatDueDate,
+    getDueState,
+    getRetrievability,
+    interleaveReviewQueue,
+    type ReviewCard,
 } from '@/lib/spaced-repetition';
-import { calculateDashboardReviewMetrics, detectWeakTopics, getStudyStreak } from '@/lib/study-analytics';
+import { buildProgressMilestones, calculateDashboardReviewMetrics, detectWeakTopics, getStudyStreak } from '@/lib/study-analytics';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
 import { supabase } from '@/lib/supabase';
 
@@ -42,6 +43,7 @@ export default function DashboardScreen() {
   const [hasReviewState, setHasReviewState] = useState(false);
   const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
   const [studyStreak, setStudyStreak] = useState(0);
+  const [examPlans, setExamPlans] = useState<ExamPlan[]>([]);
   
   const hasStudyPlan = hasRealMaterials || hasReviewState;
   
@@ -59,12 +61,26 @@ export default function DashboardScreen() {
     [reviewCards]
   );
 
+  const activeExamPlans = examPlans.filter((plan) => getExamDaysRemaining(plan) !== null);
   const todaysQueue = useMemo(
-    () => dedupeByStudyArea(interleaveReviewQueue(reviewCards)).slice(0, 4),
-    [reviewCards]
+    () => activeExamPlans.length > 0
+      ? buildCombinedExamQueue(reviewCards, activeExamPlans)
+      : dedupeByStudyArea(interleaveReviewQueue(reviewCards)).slice(0, 4),
+    [activeExamPlans, reviewCards]
   );
+  const examDaysRemaining = activeExamPlans.length > 0
+    ? Math.min(...activeExamPlans.map((plan) => getExamDaysRemaining(plan) ?? 7))
+    : null;
   
   const weakTopicItems = useMemo(() => detectWeakTopics(reviewCards), [reviewCards]);
+  const progressMilestones = useMemo(() => buildProgressMilestones(reviewCards), [reviewCards]);
+
+  const shareMilestone = async (milestone: (typeof progressMilestones)[number]) => {
+    await Share.share({
+      message: milestone.message,
+      title: `${milestone.course} milestone`,
+    });
+  };
   
   const studyBlocks = useMemo(
     () => [
@@ -105,6 +121,9 @@ export default function DashboardScreen() {
 
       // If logged in, turn off the loading screen
       setIsCheckingAuth(false);
+      loadExamPlans().then((plans) => {
+        if (isMounted) setExamPlans(plans);
+      });
 
       // Fetch their study materials
       loadStudyReviewState().then(({ reviewCards: nextCards, sessions, sources }) => {
@@ -186,24 +205,39 @@ export default function DashboardScreen() {
 
       <View style={styles.grid}>
         <StudyCard style={[styles.column, styles.playfulPanel, isDark && styles.playfulPanelDark]}>
-          <SectionHeader title="Today’s Queue" detail="A mix of topics — no repeats." />
+          <SectionHeader
+            title={examDaysRemaining !== null ? 'Exam Queue' : 'Today’s Queue'}
+            detail={examDaysRemaining !== null ? 'Topics rotate by priority.' : 'A mix of topics — no repeats.'}
+          />
+          {activeExamPlans.map((plan) => (
+            <ThemedText key={plan.course} type="smallBold">
+              {plan.course} exam in {getExamDaysRemaining(plan)} days: {Math.round(getSubjectRecall(reviewCards, plan.course) * 100)}% recall toward {Math.round((plan.targetRecall ?? 0.9) * 100)}%.
+            </ThemedText>
+          ))}
           {todaysQueue.length > 0 ? (
             todaysQueue.map((item) => (
-              <ThemedView key={item.id} style={styles.queueItem}>
-                <View style={[styles.accentDot, { backgroundColor: theme.brandPink }]} />
-                <View style={styles.queueCopy}>
-                  <ThemedText type="smallBold">{item.topic}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {item.course} - difficulty {item.difficulty.toFixed(1)}
-                  </ThemedText>
-                </View>
-                <View style={styles.queueMeta}>
-                  <ThemedText type="smallBold">1 card</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {formatDueDate(item.dueAt)}
-                  </ThemedText>
-                </View>
-              </ThemedView>
+              <Pressable
+                key={item.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Review ${item.topic} from ${item.course}`}
+                onPress={() => router.push('/reviews')}
+                style={({ pressed }) => pressed && styles.pressed}>
+                <ThemedView style={styles.queueItem}>
+                  <View style={[styles.accentDot, { backgroundColor: theme.brandPink }]} />
+                  <View style={styles.queueCopy}>
+                    <ThemedText type="smallBold">{item.topic}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {item.course} - difficulty {item.difficulty.toFixed(1)}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.queueMeta}>
+                    <ThemedText type="smallBold">1 card</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {formatDueDate(item.dueAt)}
+                    </ThemedText>
+                  </View>
+                </ThemedView>
+              </Pressable>
             ))
           ) : (
             <ThemedView type="backgroundElement" style={styles.emptyPanel}>
@@ -234,6 +268,25 @@ export default function DashboardScreen() {
         </StudyCard>
       </View>
 
+      <StudyCard style={[styles.milestoneCard, isDark && styles.playfulPanelDark]}>
+        <ThemedText type="caption" style={{ color: theme.primary }}>Progress milestones</ThemedText>
+        {progressMilestones.length > 0 ? (
+          <View style={styles.milestoneList}>
+            {progressMilestones.map((milestone) => (
+              <View key={milestone.course} style={styles.milestoneRow}>
+                <View style={styles.milestoneCopy}>
+                  <ThemedText type="subtitle">{milestone.message}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">Badge: {milestone.badge}</ThemedText>
+                </View>
+                <ActionButton label="Share badge" variant="secondary" onPress={() => shareMilestone(milestone)} />
+              </View>
+            ))}
+          </View>
+        ) : (
+          <ThemedText type="small" themeColor="textSecondary">Start a topic to earn a progress badge.</ThemedText>
+        )}
+      </StudyCard>
+
       <View style={styles.grid}>
         <StudyCard style={[styles.column, styles.playfulPanelAlt, isDark && styles.playfulPanelAltDark]}>
           <SectionHeader title="Notes From Nudge" detail="Small things to keep in mind." />
@@ -258,9 +311,9 @@ export default function DashboardScreen() {
         <StudyCard style={[styles.column, styles.playfulPanel, isDark && styles.playfulPanelDark]}>
           <SectionHeader title="Needs Practice" detail="Mix these into your next session." />
           <View style={styles.topicWrap}>
-            {(weakTopicItems.length > 0 ? weakTopicItems.map((item) => item.topic) : ['No weak topics yet']).map((topic) => (
-              <ThemedView key={topic} type="backgroundElement" style={styles.topicPill}>
-                <ThemedText type="smallBold">{topic}</ThemedText>
+            {(weakTopicItems.length > 0 ? weakTopicItems : [{ topic: 'No weak topics yet', course: '' }]).map((item) => (
+              <ThemedView key={`${item.course}-${item.topic}`} type="backgroundElement" style={styles.topicPill}>
+                <ThemedText type="smallBold">{item.course ? `${item.course} - ${item.topic}` : item.topic}</ThemedText>
               </ThemedView>
             ))}
           </View>
@@ -281,6 +334,19 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.three,
   },
+  milestoneCard: {
+    gap: Spacing.three,
+  },
+  milestoneList: { gap: Spacing.two },
+  milestoneRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.three,
+    justifyContent: 'space-between',
+  },
+  milestoneCopy: { flex: 1, gap: Spacing.one, minWidth: 220 },
+  pressed: { opacity: 0.78 },
   heroCard: {
     flexGrow: 2,
     flexBasis: 320,

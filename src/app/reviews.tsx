@@ -8,16 +8,17 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { buildCombinedExamQueue, getExamDaysRemaining, loadExamPlans, type ExamPlan } from '@/lib/exam-proximity';
 import {
-  buildDailyReviewQueue,
-  formatDueDate,
-  getElapsedDays,
-  getRetrievability,
-  recallGrades,
-  reviewCard,
-  studyAreaKey,
-  type RecallGrade,
-  type ReviewCard,
+    buildDailyReviewQueue,
+    formatDueDate,
+    getElapsedDays,
+    getRetrievability,
+    recallGrades,
+    reviewCard,
+    studyAreaKey,
+    type RecallGrade,
+    type ReviewCard,
 } from '@/lib/spaced-repetition';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
 import { saveReviewCards } from '@/lib/study-state';
@@ -48,9 +49,16 @@ export default function ReviewsScreen() {
   const [reviewedCount, setReviewedCount] = useState(0);
   const [reviewedAreas, setReviewedAreas] = useState<string[]>([]);
   const [isComplete, setIsComplete] = useState(false);
+  const [examPlans, setExamPlans] = useState<ExamPlan[]>([]);
   const now = useMemo(() => new Date(), [cards]);
-  // 4-6 mixed tasks for the day: subjects/topics interleaved with no repeated study area.
-  const queue = useMemo(() => buildDailyReviewQueue(cards, now), [cards, now]);
+  const activeExamPlans = examPlans.filter((plan) => getExamDaysRemaining(plan, now) !== null);
+  const examDaysRemaining = activeExamPlans.length > 0 ? Math.min(...activeExamPlans.map((plan) => getExamDaysRemaining(plan, now) ?? 7)) : null;
+  const queue = useMemo(
+    () => activeExamPlans.length > 0
+      ? buildCombinedExamQueue(cards, activeExamPlans, now)
+      : buildDailyReviewQueue(cards, now),
+    [activeExamPlans, cards, now]
+  );
   const activeCard = cards.find((card) => card.id === activeCardId) ?? queue[0];
   const activeRetrievability = activeCard ? getRetrievability(activeCard, now) : 0;
   const dueCount = cards.filter((card) => new Date(card.dueAt).getTime() <= now.getTime()).length;
@@ -64,6 +72,9 @@ export default function ReviewsScreen() {
       if (!isMounted) return;
       setCards(nextCards);
       setActiveCardId((current) => nextCards.find((card) => card.id === current)?.id ?? nextCards[0]?.id ?? '');
+    });
+    loadExamPlans().then((plans) => {
+      if (isMounted) setExamPlans(plans);
     });
 
     return () => {
@@ -98,7 +109,11 @@ export default function ReviewsScreen() {
     }
 
     // Move to the next study area we haven't covered yet — keeps the session mix repeat-free.
-    const nextCard = buildDailyReviewQueue(nextCards, new Date()).find(
+    const nextActivePlans = activeExamPlans.filter((plan) => getExamDaysRemaining(plan, new Date()) !== null);
+    const nextQueue = nextActivePlans.length > 0
+      ? buildCombinedExamQueue(nextCards, nextActivePlans, new Date())
+      : buildDailyReviewQueue(nextCards, new Date());
+    const nextCard = nextQueue.find(
       (card) => !nextReviewedAreas.includes(studyAreaKey(card))
     );
     if (nextCard) {
@@ -109,7 +124,9 @@ export default function ReviewsScreen() {
   }
 
   function restartReview() {
-    const nextQueue = buildDailyReviewQueue(cards, new Date());
+    const nextQueue = activeExamPlans.length > 0
+      ? buildCombinedExamQueue(cards, activeExamPlans, new Date())
+      : buildDailyReviewQueue(cards, new Date());
     setReviewedCount(0);
     setReviewedAreas([]);
     setIsComplete(false);
@@ -289,7 +306,12 @@ export default function ReviewsScreen() {
           </StudyCard>
 
           <StudyCard style={styles.sidePanel}>
-            <SectionHeader title="Interleaved Queue" detail="4-6 mixed topics today — no repeats." />
+            <SectionHeader
+              title={examDaysRemaining !== null ? 'Exam Proximity Queue' : 'Interleaved Queue'}
+              detail={examDaysRemaining !== null
+                ? 'Topics rotate by priority, with one new card maximum per session.'
+                : '4-6 mixed topics today — no repeats.'}
+            />
             {queue.map((card, index) => {
               const isActive = card.id === activeCard.id;
               const recall = getRetrievability(card, now);
@@ -297,6 +319,8 @@ export default function ReviewsScreen() {
               return (
                 <Pressable
                   key={card.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Study ${card.topic} from ${card.course}`}
                   onPress={() => chooseCard(card.id)}
                   style={({ pressed }) => pressed && styles.pressed}>
                   <ThemedView
@@ -311,7 +335,7 @@ export default function ReviewsScreen() {
                     <View style={styles.flexCopy}>
                       <ThemedText type="smallBold">{card.topic}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
-                        {formatDueDate(card.dueAt, now)} - {percent(recall)}
+                        {card.course} - {formatDueDate(card.dueAt, now)} - {percent(recall)}
                       </ThemedText>
                     </View>
                   </ThemedView>
