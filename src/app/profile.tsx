@@ -160,7 +160,7 @@ export default function ProfileScreen() {
                 <DateTimePicker
                   value={examDate ? new Date(`${examDate}T12:00:00`) : new Date()}
                   mode="date"
-                  display="calendar"
+                  display="default"
                   minimumDate={new Date()}
                   onChange={handleDateChange}
                 />
