@@ -41,7 +41,8 @@ async function loadSourcesAndAssets() {
   }
 
   try {
-    return await refreshParsingState();
+    const remote = await refreshParsingState();
+    return remote;
   } catch {
     return {
       assets: cachedAssets,

@@ -37,7 +37,6 @@ export type CitedChunkLike = {
   text: string;
 };
 
-export const SECTION_ITEM_LIMITS = { flashcards: 12, notes: 10, quiz: 8 };
 
 export function normalizeCitations(raw: unknown, knownLabels: Set<string>): string[] {
   if (!Array.isArray(raw)) return [];
@@ -90,9 +89,9 @@ export async function verifyGroups(
   const verifyGroup = async ({ chunks, pack }: { chunks: CitedChunkLike[]; pack: SectionPack }): Promise<VerifiedMaterial> => {
     const claims: Array<{ claim: string; kind: 'note' | 'flashcard' | 'quiz'; ref: CitedNote | CitedFlashcard | CitedQuizItem }> = [];
 
-    pack.notes.slice(0, SECTION_ITEM_LIMITS.notes).forEach((note) => claims.push({ claim: note.text, kind: 'note', ref: note }));
-    pack.flashcards.slice(0, SECTION_ITEM_LIMITS.flashcards).forEach((card) => claims.push({ claim: `${card.front} -> ${card.back}`, kind: 'flashcard', ref: card }));
-    pack.quiz.slice(0, SECTION_ITEM_LIMITS.quiz).forEach((item) => claims.push({ claim: `${item.question} Answer: ${item.answer}`, kind: 'quiz', ref: item }));
+    pack.notes.forEach((note) => claims.push({ claim: note.text, kind: 'note', ref: note }));
+    pack.flashcards.forEach((card) => claims.push({ claim: `${card.front} -> ${card.back}`, kind: 'flashcard', ref: card }));
+    pack.quiz.forEach((item) => claims.push({ claim: `${item.question} Answer: ${item.answer}`, kind: 'quiz', ref: item }));
 
     if (claims.length === 0) return { flashcards: [], notes: [], quiz: [] };
 

@@ -17,7 +17,14 @@ import {
     getStudyStreak,
 } from '@/lib/study-analytics';
 import { loadStudyReviewState } from '@/lib/study-review-loader';
-import type { FocusSessionRecord } from '@/types/study-state';
+import {
+  evaluateMultiQuery,
+  searchDocuments,
+  type SearchDocument,
+} from '@/lib/ir';
+import { loadRelevanceFeedback } from '@/lib/study-state';
+import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
+import type { FocusSessionRecord, RelevanceFeedbackRecord } from '@/types/study-state';
 
 const accentColors = ['#ff4d8b', '#b8a4ed', '#e8b94a', '#a4d4c5', '#60A5FA'];
 
@@ -30,6 +37,9 @@ export default function AnalyticsScreen() {
   const isDark = theme.background === '#07111F';
   const [reviewCards, setReviewCards] = useState<ReviewCard[]>([]);
   const [sessions, setSessions] = useState<FocusSessionRecord[]>([]);
+  const [sources, setSources] = useState<SourceRecord[]>([]);
+  const [assets, setAssets] = useState<GeneratedAssetRecord[]>([]);
+  const [relevanceFeedback, setRelevanceFeedback] = useState<RelevanceFeedbackRecord[]>([]);
   const now = useMemo(() => new Date(), [reviewCards, sessions]);
   const retentionCurve = useMemo(() => buildRetentionCurve(reviewCards, now), [reviewCards, now]);
   const masteryByTopic = useMemo(() => buildMasteryByTopic(reviewCards, now), [reviewCards, now]);
@@ -43,16 +53,167 @@ export default function AnalyticsScreen() {
   useEffect(() => {
     let isMounted = true;
 
-    loadStudyReviewState().then(({ reviewCards: nextCards, sessions: nextSessions }) => {
+    loadStudyReviewState().then(({ assets: nextAssets, reviewCards: nextCards, sessions: nextSessions, sources: nextSources }) => {
       if (!isMounted) return;
+      setAssets(nextAssets);
       setReviewCards(nextCards);
       setSessions(nextSessions);
+      setSources(nextSources);
+    });
+
+    loadRelevanceFeedback().then((records) => {
+      if (!isMounted) return;
+      setRelevanceFeedback(records);
     });
 
     return () => {
       isMounted = false;
     };
   }, []);
+
+  const irMetrics = useMemo(() => {
+    const assetBySourceId = new Map<string, GeneratedAssetRecord[]>();
+    for (const asset of assets) {
+      const list = assetBySourceId.get(asset.sourceId) ?? [];
+      list.push(asset);
+      assetBySourceId.set(asset.sourceId, list);
+    }
+
+    const searchDocs: SearchDocument[] = sources.map((source) => {
+      const matchedAssets = assetBySourceId.get(source.id) ?? [];
+      const contentParts: string[] = [source.title, source.subject ?? '', source.topic ?? ''];
+      for (const asset of matchedAssets) {
+        if (asset.content) {
+          if (asset.content.summary) contentParts.push(asset.content.summary);
+          if (Array.isArray(asset.content.detailed_notes)) contentParts.push(...asset.content.detailed_notes);
+          if (Array.isArray(asset.content.flashcards)) {
+            for (const c of asset.content.flashcards) contentParts.push(c.front, c.back);
+          }
+          if (Array.isArray(asset.content.quiz)) {
+            for (const q of asset.content.quiz) contentParts.push(q.question, ...q.choices, q.answer);
+          }
+        }
+      }
+      return {
+        id: source.id,
+        title: source.title,
+        text: contentParts.filter(Boolean).join(' '),
+      };
+    });
+
+    if (searchDocs.length === 0) {
+      return {
+        precision: 0,
+        recall: 0,
+        f1Score: 0,
+        map: 0,
+        ndcgAtK: 0,
+        pAt5: 0,
+        totalJudgments: relevanceFeedback.length,
+        evaluatedQueries: 0,
+        hasRealFeedback: false,
+      };
+    }
+
+    const feedbackByQuery = new Map<string, { relevant: Set<string>; nonRelevant: Set<string> }>();
+    for (const record of relevanceFeedback) {
+      if (!feedbackByQuery.has(record.query)) {
+        feedbackByQuery.set(record.query, { relevant: new Set(), nonRelevant: new Set() });
+      }
+      const entry = feedbackByQuery.get(record.query)!;
+      if (record.relevant) {
+        entry.relevant.add(record.docId);
+      } else {
+        entry.nonRelevant.add(record.docId);
+      }
+    }
+
+    const queriesWithRelevant = [...feedbackByQuery.entries()].filter(
+      ([, data]) => data.relevant.size > 0
+    );
+
+    if (queriesWithRelevant.length > 0) {
+      const multiQueryInput = queriesWithRelevant.map(([q, data], idx) => {
+        const searchResults = searchDocuments(searchDocs, q, 'hybrid');
+        const retrievedDocs = searchResults.map((r) => r.docId);
+        return {
+          queryId: `q_${idx}`,
+          relevantDocs: data.relevant,
+          retrievedDocs,
+        };
+      });
+
+      const metrics = evaluateMultiQuery(multiQueryInput, [1, 5]);
+
+      return {
+        precision: metrics.precision,
+        recall: metrics.recall,
+        f1Score: metrics.f1Score,
+        map: metrics.meanAveragePrecision,
+        ndcgAtK: metrics.ndcgAtK[5] ?? 0,
+        pAt5: metrics.precisionAtK[5] ?? 0,
+        totalJudgments: relevanceFeedback.length,
+        evaluatedQueries: queriesWithRelevant.length,
+        hasRealFeedback: true,
+      };
+    }
+
+    const baselineQueries = Array.from(
+      new Set(
+        sources
+          .map((s) => s.topic?.trim() || s.subject?.trim())
+          .filter((t): t is string => Boolean(t && t.length >= 3))
+      )
+    ).slice(0, 5);
+
+    if (baselineQueries.length > 0) {
+      const syntheticInput = baselineQueries.map((queryText, idx) => {
+        const relevant = new Set(
+          sources
+            .filter((s) =>
+              Boolean(
+                s.topic?.toLowerCase().includes(queryText.toLowerCase()) ||
+                s.subject?.toLowerCase().includes(queryText.toLowerCase())
+              )
+            )
+            .map((s) => s.id)
+        );
+        const searchResults = searchDocuments(searchDocs, queryText, 'hybrid');
+        const retrievedDocs = searchResults.map((r) => r.docId);
+        return {
+          queryId: `synth_${idx}`,
+          relevantDocs: relevant,
+          retrievedDocs,
+        };
+      });
+
+      const metrics = evaluateMultiQuery(syntheticInput, [1, 5]);
+
+      return {
+        precision: metrics.precision,
+        recall: metrics.recall,
+        f1Score: metrics.f1Score,
+        map: metrics.meanAveragePrecision,
+        ndcgAtK: metrics.ndcgAtK[5] ?? 0,
+        pAt5: metrics.precisionAtK[5] ?? 0,
+        totalJudgments: relevanceFeedback.length,
+        evaluatedQueries: baselineQueries.length,
+        hasRealFeedback: false,
+      };
+    }
+
+    return {
+      precision: 0,
+      recall: 0,
+      f1Score: 0,
+      map: 0,
+      ndcgAtK: 0,
+      pAt5: 0,
+      totalJudgments: relevanceFeedback.length,
+      evaluatedQueries: 0,
+      hasRealFeedback: false,
+    };
+  }, [sources, relevanceFeedback]);
 
   return (
     <StudyScreen
@@ -254,6 +415,54 @@ export default function AnalyticsScreen() {
           ))}
         </View>
       </StudyCard>
+
+      <StudyCard>
+        <SectionHeader
+          title="IR Search & Retrieval Performance"
+          detail={
+            irMetrics.hasRealFeedback
+              ? `Trained on ${irMetrics.totalJudgments} feedback judgment${irMetrics.totalJudgments === 1 ? '' : 's'} across ${irMetrics.evaluatedQueries} queries.`
+              : 'Hybrid retrieval model (Exact/Prefix/Suffix/Fuzzy pattern matching + VSM).'
+          }
+        />
+        <View style={styles.loadGrid}>
+          <ThemedView type="backgroundElement" style={styles.loadTile}>
+            <ThemedText type="caption" themeColor="textSecondary">MAP</ThemedText>
+            <ThemedText type="metric">{irMetrics.map.toFixed(2)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Mean Avg Precision</ThemedText>
+          </ThemedView>
+          <ThemedView type="backgroundElement" style={styles.loadTile}>
+            <ThemedText type="caption" themeColor="textSecondary">NDCG@5</ThemedText>
+            <ThemedText type="metric">{irMetrics.ndcgAtK.toFixed(2)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Ranking quality</ThemedText>
+          </ThemedView>
+          <ThemedView type="backgroundElement" style={styles.loadTile}>
+            <ThemedText type="caption" themeColor="textSecondary">P@5</ThemedText>
+            <ThemedText type="metric">{irMetrics.pAt5.toFixed(2)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Top-5 precision</ThemedText>
+          </ThemedView>
+          <ThemedView type="backgroundElement" style={styles.loadTile}>
+            <ThemedText type="caption" themeColor="textSecondary">Recall</ThemedText>
+            <ThemedText type="metric">{pct(Math.round(irMetrics.recall * 100))}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Retrieval coverage</ThemedText>
+          </ThemedView>
+          <ThemedView type="backgroundElement" style={styles.loadTile}>
+            <ThemedText type="caption" themeColor="textSecondary">F1 Score</ThemedText>
+            <ThemedText type="metric">{irMetrics.f1Score.toFixed(2)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Harmonic mean</ThemedText>
+          </ThemedView>
+        </View>
+        <ThemedView type="backgroundElement" style={styles.irStatusRow}>
+          <ThemedText type="smallBold">
+            {irMetrics.hasRealFeedback ? 'Feedback-Enhanced Ranking Active' : 'Baseline Model Active'}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {irMetrics.hasRealFeedback
+              ? 'Library relevance feedback is dynamically tuning query vectors using Rocchio / IDE algorithms.'
+              : 'Mark search results as Relevant / Not Relevant in the Library to personalize and track your IR evaluation.'}
+          </ThemedText>
+        </ThemedView>
+      </StudyCard>
     </StudyScreen>
   );
 }
@@ -410,5 +619,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     minHeight: 6,
     width: '100%',
+  },
+  irStatusRow: {
+    borderRadius: 18,
+    borderCurve: 'continuous',
+    gap: Spacing.one,
+    marginTop: Spacing.two,
+    padding: Spacing.three,
   },
 });

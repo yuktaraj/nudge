@@ -14,6 +14,23 @@ import { pickStudyFiles } from '@/lib/parsing/document-picker';
 import { refreshParsingState, uploadAndProcessFiles } from '@/lib/parsing/pipeline';
 import { deleteSource, startProcessing } from '@/lib/parsing/supabase-api';
 import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
+import {
+  useDocumentSearch,
+  type SearchMode,
+  buildReformulatedQuery,
+} from '@/lib/ir/search';
+
+/** Color per retrieval mode for result badges */
+const modeColors: Partial<Record<SearchMode, string>> = {
+  exact:     '#1e6fd9',
+  prefix:    '#7c3aed',
+  suffix:    '#0891b2',
+  substring: '#0d9488',
+  fuzzy:     '#d97706',
+  boolean:   '#dc2626',
+  vsm:       '#16a34a',
+  hybrid:    '#6b7280',
+};
 
 const commonSubjects = [
   'Biology',
@@ -207,13 +224,121 @@ export default function LibraryScreen() {
   const [isCustomSubjectOpen, setIsCustomSubjectOpen] = useState(false);
   const [topic, setTopic] = useState('');
   const [pastedText, setPastedText] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [uploadMessage, setUploadMessage] = useState(
     hasSupabaseConfig()
       ? 'Ready for PDFs, slides, docs, or notes.'
       : 'Connect Supabase to upload files.'
   );
+
+  const searchDocuments = useMemo(() => {
+    const assetBySourceId = new Map<string, GeneratedAssetRecord[]>();
+    for (const asset of assets) {
+      const list = assetBySourceId.get(asset.sourceId) ?? [];
+      list.push(asset);
+      assetBySourceId.set(asset.sourceId, list);
+    }
+
+    return sources.map((source) => {
+      const matchedAssets = assetBySourceId.get(source.id) ?? [];
+      const contentParts: string[] = [
+        source.title,
+        source.subject ?? '',
+        source.topic ?? '',
+        inferType(source),
+      ];
+
+      for (const asset of matchedAssets) {
+        if (asset.title && asset.title !== source.title) {
+          contentParts.push(asset.title);
+        }
+        if (asset.content) {
+          if (asset.content.summary) {
+            contentParts.push(asset.content.summary);
+          }
+          if (Array.isArray(asset.content.detailed_notes)) {
+            contentParts.push(...asset.content.detailed_notes);
+          }
+          if (Array.isArray(asset.content.flashcards)) {
+            for (const card of asset.content.flashcards) {
+              contentParts.push(card.front, card.back);
+            }
+          }
+          if (Array.isArray(asset.content.quiz)) {
+            for (const q of asset.content.quiz) {
+              contentParts.push(q.question, ...q.choices, q.answer);
+            }
+          }
+          if (Array.isArray(asset.content.weak_topics)) {
+            contentParts.push(...asset.content.weak_topics);
+          }
+        }
+      }
+
+      return {
+        id: source.id,
+        title: source.title,
+        text: contentParts.filter(Boolean).join(' '),
+      };
+    });
+  }, [sources, assets]);
+
+  const {
+    results,
+    query,
+    setQuery,
+    mode,
+    setMode,
+    feedbackModel,
+    setFeedbackModel,
+    submitFeedback,
+    clearFeedback,
+    hasFeedback,
+    relevantDocs,
+    nonRelevantDocs,
+  } = useDocumentSearch(searchDocuments, 'hybrid');
+
+  // Auto-reformulate query when a document is marked relevant
+  const handleMarkRelevant = useCallback((docId: string) => {
+    const currentDocIds = results.map((r) => r.docId);
+    submitFeedback(docId, true, currentDocIds);
+
+    // Immediately reformulate query using relevance feedback
+    const newRelevantIds = [...new Set([...relevantDocs, docId])];
+    const newNonRelevantIds = currentDocIds.filter((id) => id !== docId && !relevantDocs.includes(id));
+
+    if (newRelevantIds.length > 0) {
+      const reformulated = buildReformulatedQuery(
+        query,
+        newRelevantIds.map((id) => ({
+          docId: id,
+          vector: new Map(
+            (searchDocuments.find((doc) => doc.id === id)?.text
+              .toLowerCase()
+              .match(/\w+/g) ?? []).map((term) => [term, 1] as [string, number])
+          ),
+        })),
+        newNonRelevantIds.map((id) => ({
+          docId: id,
+          vector: new Map(
+            (searchDocuments.find((doc) => doc.id === id)?.text
+              .toLowerCase()
+              .match(/\w+/g) ?? []).map((term) => [term, 1] as [string, number])
+          ),
+        })),
+        feedbackModel
+      );
+      setQuery(reformulated);
+    }
+  }, [results, relevantDocs, query, feedbackModel, submitFeedback, setQuery, searchDocuments]);
+
+  const sourceMap = new Map(sources.map((source) => [source.id, source]));
+  const filteredSources = useMemo(() => {
+    if (!query.trim()) return dedupeSources(sources);
+    const ids = new Set(results.map((r) => r.docId));
+    if (ids.size === 0) return [];
+    return dedupeSources(sources.filter((source) => ids.has(source.id)));
+  }, [results, sources, query]);
 
   const loadLocal = useCallback(async () => {
     const [cachedSources, cachedAssets] = await Promise.all([
@@ -237,8 +362,8 @@ export default function LibraryScreen() {
       setSources((current) => dedupeSources(mergeRemoteWithLocalDiagnostics(nextState.sources, current)));
       setAssets(nextState.assets);
       setUploadMessage('Library updated.');
-    } catch (error) {
-      setUploadMessage(error instanceof Error ? error.message : 'Could not refresh parsing state.');
+    } catch {
+      // Keep local cached state if remote refresh fails
     }
   }, [loadLocal]);
 
@@ -269,7 +394,7 @@ export default function LibraryScreen() {
     const suggestionText = [
       topic,
       pastedText,
-      searchQuery,
+      query,
       ...sources.map((source) => `${source.title} ${source.topic ?? ''}`),
     ].join(' ');
 
@@ -278,19 +403,7 @@ export default function LibraryScreen() {
       ...existingSubjects,
       ...commonSubjects,
     ]).slice(0, 16);
-  }, [pastedText, searchQuery, sources, topic]);
-  const filteredSources = useMemo(() => {
-    const dedupedSources = dedupeSources(sources);
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return dedupedSources;
-
-    return dedupedSources.filter((source) =>
-      [source.title, source.subject ?? '', source.topic ?? '', inferType(source)]
-        .join(' ')
-        .toLowerCase()
-        .includes(query)
-    );
-  }, [searchQuery, sources]);
+  }, [pastedText, query, sources, topic]);
 
   function makeTextFile() {
     const text = pastedText.trim();
@@ -537,7 +650,9 @@ export default function LibraryScreen() {
           <View style={styles.buttonRow}>
             <ActionButton
               label={isBusy ? 'Uploading...' : 'Choose file'}
-              onPress={chooseFiles}
+              onPress={() => {
+                void chooseFiles();
+              }}
             />
             <ActionButton
               label="Upload pasted notes"
@@ -581,21 +696,112 @@ export default function LibraryScreen() {
       </View>
 
       <StudyCard>
-        <SectionHeader title="Recent Uploads" detail="See what is ready." />
-        <TextInput
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search by title, subject, or topic"
-          placeholderTextColor={theme.textSecondary}
-          style={[
-            styles.textInput,
-            {
-              backgroundColor: theme.card,
-              borderColor: theme.hairline,
-              color: theme.text,
-            },
-          ]}
-        />
+        <SectionHeader title="Recent Uploads" detail="Search with IR techniques." />
+        <View style={styles.searchBar}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search by title, subject, topic, or concept"
+            placeholderTextColor={theme.textSecondary}
+            style={[
+              styles.textInput,
+              {
+                backgroundColor: theme.card,
+                borderColor: theme.hairline,
+                color: theme.text,
+              },
+            ]}
+          />
+          {hasFeedback ? (
+            <ActionButton
+              label="Clear Feedback"
+              variant="secondary"
+              style={styles.compactButton}
+              onPress={clearFeedback}
+            />
+          ) : null}
+        </View>
+        <View style={styles.modeGrid}>
+          {(
+            [
+              ['hybrid', 'Hybrid'],
+              ['exact', 'Exact'],
+              ['prefix', 'Prefix'],
+              ['suffix', 'Suffix'],
+              ['fuzzy', 'Fuzzy'],
+              ['boolean', 'Boolean'],
+              ['vsm', 'VSM'],
+            ] as Array<[SearchMode, string]>
+          ).map(([modeValue, label]) => (
+            <Pressable
+              key={modeValue}
+              onPress={() => setMode(modeValue)}
+              style={({ pressed }) => [
+                styles.modeButton,
+                mode === modeValue && { borderColor: theme.primary, backgroundColor: theme.backgroundSelected },
+                pressed && styles.pressed,
+              ]}>
+              <ThemedText type="smallBold">{label}</ThemedText>
+            </Pressable>
+          ))}
+          <Pressable
+            onPress={() => setFeedbackModel(feedbackModel === 'rocchio' ? 'ide_regular' : feedbackModel === 'ide_regular' ? 'ide_dec_hi' : 'rocchio')}
+            style={({ pressed }) => [
+              styles.modeButton,
+              { borderColor: theme.primary },
+              pressed && styles.pressed,
+            ]}>
+            <ThemedText type="smallBold">Feedback: {feedbackModel === 'rocchio' ? 'Rocchio' : feedbackModel === 'ide_regular' ? 'IDE Reg' : 'IDE DecHi'}</ThemedText>
+          </Pressable>
+        </View>
+        {Boolean(query.trim()) && results.length > 0 ? (
+          <View style={styles.resultsList}>
+            <SectionHeader
+              title="IR Results"
+              detail={`${results.length} ranked · click to mark relevant`}
+            />
+            {results.slice(0, 5).map((result, index) => {
+              const isRelevant = relevantDocs.includes(result.docId);
+              const isNotRelevant = nonRelevantDocs.includes(result.docId);
+              return (
+                <Pressable
+                  key={result.docId}
+                  onPress={() => handleMarkRelevant(result.docId)}
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <ThemedView
+                    type="backgroundElement"
+                    style={[
+                      styles.resultRow,
+                      isRelevant && { borderWidth: 1.5, borderColor: theme.success },
+                      isNotRelevant && { opacity: 0.55 },
+                    ]}>
+                    <View style={styles.resultHeader}>
+                      <ThemedText type="smallBold" style={{ flex: 1 }}>{result.title}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">#{index + 1} · {result.score.toFixed(3)}</ThemedText>
+                    </View>
+                    {result.retrievedBy.length > 0 ? (
+                      <View style={styles.modeBadgeRow}>
+                        {result.retrievedBy.map((m) => (
+                          <ThemedView key={m} style={[styles.modeBadge, { backgroundColor: modeColors[m] ?? theme.primary + '22' }]}>
+                            <ThemedText type="small" style={{ color: modeColors[m] ? '#fff' : theme.primary, fontWeight: '700', fontSize: 10 }}>{m.toUpperCase()}</ThemedText>
+                          </ThemedView>
+                        ))}
+                        {isRelevant ? (
+                          <ThemedView style={[styles.modeBadge, { backgroundColor: theme.success }]}>
+                            <ThemedText type="small" style={{ color: '#fff', fontWeight: '700', fontSize: 10 }}>✓ RELEVANT</ThemedText>
+                          </ThemedView>
+                        ) : null}
+                      </View>
+                    ) : null}
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {result.matchedTerms.length > 0 ? `Matches: ${result.matchedTerms.slice(0, 4).join(', ')}` : 'Conceptual match'}
+                    </ThemedText>
+                  </ThemedView>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
         {filteredSources.length === 0 ? (
           <ThemedView type="backgroundElement" style={styles.emptyState}>
             <ThemedText type="smallBold">
@@ -620,7 +826,7 @@ export default function LibraryScreen() {
                 <ThemedText type="small" themeColor="textSecondary">
                   {inferType(source)} - {formatSize(source.size)} - {formatDate(source.createdAt)}
                 </ThemedText>
-                {(source.subject || source.topic) && (
+                {Boolean(source.subject || source.topic) ? (
                   <View style={styles.tagRow}>
                     {source.subject ? (
                       <ThemedView type="backgroundSelected" style={styles.labelPill}>
@@ -633,12 +839,12 @@ export default function LibraryScreen() {
                       </ThemedView>
                     ) : null}
                   </View>
-                )}
-                {source.error && (
+                ) : null}
+                {Boolean(source.error) ? (
                   <ThemedText type="smallBold" style={{ color: theme.error }}>
                     {source.error}
                   </ThemedText>
-                )}
+                ) : null}
                 <ThemedView style={styles.progressTrack}>
                   <View
                     style={[
@@ -665,19 +871,19 @@ export default function LibraryScreen() {
                   </ThemedText>
                 </View>
                 <View style={styles.sourceActions}>
-                  {(source.status === 'failed' || source.status === 'needs_ocr') && (
-                    <ActionButton
-                      label={source.status === 'needs_ocr' ? 'Retry OCR' : 'Retry'}
-                      variant="secondary"
-                      onPress={() => retrySource(source.id)}
-                    />
-                  )}
-                  <ActionButton
-                    label="Delete"
-                    variant="secondary"
-                    onPress={() => removeSource(source.id)}
-                  />
-                </View>
+                   {Boolean(source.status === 'failed' || source.status === 'needs_ocr') ? (
+                     <ActionButton
+                       label={source.status === 'needs_ocr' ? 'Retry OCR' : 'Retry'}
+                       variant="secondary"
+                       onPress={() => retrySource(source.id)}
+                     />
+                   ) : null}
+                   <ActionButton
+                     label="Delete"
+                     variant="secondary"
+                     onPress={() => removeSource(source.id)}
+                   />
+                 </View>
               </View>
             </ThemedView>
           );
@@ -799,6 +1005,51 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.three,
   },
+  searchBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    alignItems: 'center',
+  },
+  compactButton: {
+    minHeight: 42,
+    paddingHorizontal: Spacing.three,
+  },
+  modeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
+    marginTop: Spacing.two,
+  },
+  modeButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+  },
+  modeButtonSelected: {
+    backgroundColor: 'transparent',
+  },
+  feedbackButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  resultsList: {
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  resultRow: {
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    padding: Spacing.three,
+    gap: Spacing.one,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
   fullWidthAction: {
     alignSelf: 'flex-start',
   },
@@ -870,6 +1121,17 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
+  },
+  modeBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 2,
+  },
+  modeBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   pressed: {
     opacity: 0.78,

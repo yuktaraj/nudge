@@ -26,12 +26,14 @@ Upload your study materials and let Nudge automatically generate summaries, flas
 ## Tech Stack
 
 ### Frontend
+
 - React Native
 - Expo
 - Expo Router
 - TypeScript
 
 ### Backend
+
 - Supabase
   - Authentication
   - PostgreSQL
@@ -39,6 +41,7 @@ Upload your study materials and let Nudge automatically generate summaries, flas
   - Edge Functions
 
 ### AI
+
 - Google Gemini
 
 ---
@@ -97,11 +100,11 @@ supabase/
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `EXPO_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| Variable                        | Description            |
+| ------------------------------- | ---------------------- |
+| `EXPO_PUBLIC_SUPABASE_URL`      | Supabase project URL   |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key |
-| `GEMINI_API_KEY` | Google Gemini API key |
+| `GEMINI_API_KEY`                | Google Gemini API key  |
 
 ---
 
@@ -133,10 +136,6 @@ Nudge aims to replace passive studying with an adaptive learning experience that
 
 ## Contributors
 
-- **Yukta Raj**
-- **Hardik Booker**
-- **Glenn Fernando**
-- **Monique Stewart**
 ---
 
 ## License

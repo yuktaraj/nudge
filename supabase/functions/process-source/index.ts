@@ -854,7 +854,7 @@ text:
 
 'Each passage below starts with a chunk label like [C12].\n' +
 
-`Return at most ${SECTION_ITEM_LIMITS.notes} detailed notes, ${SECTION_ITEM_LIMITS.flashcards} flashcards, and ${SECTION_ITEM_LIMITS.quiz} quiz questions.\n` +
+'Generate as many unique notes, flashcards, and quiz questions as the content supports — cover every distinct concept without repeating the same idea.\n' +
 
 'Every item MUST include a "citations" array listing the chunk labels it was derived from. Never invent labels.\n' +
 

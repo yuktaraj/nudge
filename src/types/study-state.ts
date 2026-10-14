@@ -9,7 +9,16 @@ export type FocusSessionRecord = {
   phase: 'study' | 'break';
 };
 
+export type RelevanceFeedbackRecord = {
+  id?: string;
+  query: string;
+  docId: string;
+  relevant: boolean;
+  timestamp: string;
+};
+
 export type PersistedStudyState = {
   reviewCards: ReviewCard[];
   sessions: FocusSessionRecord[];
+  relevanceFeedback?: RelevanceFeedbackRecord[];
 };

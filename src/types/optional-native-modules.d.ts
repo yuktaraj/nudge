@@ -29,7 +29,13 @@ declare module 'expo-sqlite' {
 }
 
 declare module '@react-native-community/datetimepicker' {
-  import type { DateTimePickerEvent } from 'react-native';
+  export type DateTimePickerEvent = {
+    type: string;
+    nativeEvent: {
+      timestamp: number;
+      utcOffset?: number;
+    };
+  };
 
   export type DateTimePickerProps = {
     value: Date;

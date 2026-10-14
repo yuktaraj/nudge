@@ -1,0 +1,12 @@
+node_modules/
+.tesseract-cache/
+*.traineddata
+.git
+.gitignore
+.env
+.env.local
+README.md
+tsconfig.json
+package.json
+package-lock.json
+src/

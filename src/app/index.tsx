@@ -36,8 +36,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const isDark = theme.background === '#07111F';
   
-  // Added a loading state to prevent the dashboard from flashing before the redirect
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(false);
   
   const [hasRealMaterials, setHasRealMaterials] = useState(false);
   const [hasReviewState, setHasReviewState] = useState(false);
@@ -109,30 +108,19 @@ export default function DashboardScreen() {
   useFocusEffect(useCallback(() => {
     let isMounted = true;
 
-    // Check if the user is logged in
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Load exam plans
+    loadExamPlans().then((plans) => {
+      if (isMounted) setExamPlans(plans);
+    });
+
+    // Fetch study materials and review state
+    loadStudyReviewState().then(({ reviewCards: nextCards, sessions, sources }) => {
       if (!isMounted) return;
-
-      // If no session exists, send them to login immediately
-      if (!session) {
-        router.replace('/login');
-        return;
-      }
-
-      // If logged in, turn off the loading screen
+      setHasRealMaterials(sources.some((source) => !source.id.startsWith('fixture-')));
+      setHasReviewState(nextCards.length > 0);
+      setReviewCards(nextCards);
+      setStudyStreak(getStudyStreak(sessions));
       setIsCheckingAuth(false);
-      loadExamPlans().then((plans) => {
-        if (isMounted) setExamPlans(plans);
-      });
-
-      // Fetch their study materials
-      loadStudyReviewState().then(({ reviewCards: nextCards, sessions, sources }) => {
-        if (!isMounted) return;
-        setHasRealMaterials(sources.some((source) => !source.id.startsWith('fixture-')));
-        setHasReviewState(nextCards.length > 0);
-        setReviewCards(nextCards);
-        setStudyStreak(getStudyStreak(sessions));
-      });
     });
 
     return () => {

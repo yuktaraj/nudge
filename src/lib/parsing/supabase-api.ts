@@ -193,14 +193,29 @@ export async function fetchSourceAssets(sourceId: string) {
 export async function fetchAllSourceAssets() {
   requireConfig();
 
-  const response = await fetch(functionUrl('get-source-assets'), {
-    headers: await headers(),
-  });
-  const data = await readResponse<{ assets: AssetRow[]; sources: SourceRow[] }>(response);
+  try {
+    const response = await fetch(functionUrl('get-source-assets'), {
+      headers: await headers(),
+    });
+    if (response.ok) {
+      const data = await readResponse<{ assets: AssetRow[]; sources: SourceRow[] }>(response);
+      return {
+        assets: data.assets.map(mapAssetRow),
+        sources: data.sources.map(mapSourceRow),
+      };
+    }
+  } catch {
+    // Edge function unavailable or errored; fallback to direct REST tables below
+  }
+
+  const [sources, assets] = await Promise.all([
+    listSources().catch(() => []),
+    listGeneratedAssets().catch(() => []),
+  ]);
 
   return {
-    assets: data.assets.map(mapAssetRow),
-    sources: data.sources.map(mapSourceRow),
+    assets,
+    sources,
   };
 }
 

@@ -1,3 +1,4 @@
+import { AUTH_ENABLED } from '@/constants/auth';
 import type { GeneratedAssetRecord, SourceRecord } from '@/types/parsing';
 
 type SQLiteDatabase = {
@@ -135,6 +136,11 @@ export async function listCachedSources(): Promise<SourceRecord[]> {
     return [...memorySources.values()];
   }
 
+  const query = (AUTH_ENABLED && activeCacheUser)
+    ? `SELECT * FROM sources WHERE user_id = ? ORDER BY created_at DESC`
+    : `SELECT * FROM sources ORDER BY created_at DESC`;
+  const params = (AUTH_ENABLED && activeCacheUser) ? [activeCacheUser] : [];
+
   const rows = await db.getAllAsync<{
     created_at: string;
     error: string | null;
@@ -149,7 +155,7 @@ export async function listCachedSources(): Promise<SourceRecord[]> {
     title: string;
     topic: string | null;
     updated_at: string;
-  }>(`SELECT * FROM sources WHERE user_id = ? ORDER BY created_at DESC`, activeCacheUser);
+  }>(query, ...params);
 
   return rows.map((row: {
     created_at: string;
@@ -188,6 +194,11 @@ export async function listCachedAssets(): Promise<GeneratedAssetRecord[]> {
     return [...memoryAssets.values()];
   }
 
+  const query = (AUTH_ENABLED && activeCacheUser)
+    ? `SELECT * FROM generated_assets WHERE user_id = ? ORDER BY created_at DESC`
+    : `SELECT * FROM generated_assets ORDER BY created_at DESC`;
+  const params = (AUTH_ENABLED && activeCacheUser) ? [activeCacheUser] : [];
+
   const rows = await db.getAllAsync<{
     content_json: string;
     created_at: string;
@@ -195,7 +206,7 @@ export async function listCachedAssets(): Promise<GeneratedAssetRecord[]> {
     source_id: string;
     title: string;
     type: 'study_pack';
-  }>(`SELECT * FROM generated_assets WHERE user_id = ? ORDER BY created_at DESC`, activeCacheUser);
+  }>(query, ...params);
 
   return rows.map((row: {
     content_json: string;
@@ -220,8 +231,16 @@ export async function removeCachedSource(sourceId: string) {
   const db = await getDatabase();
   if (!db) return;
 
+  const deleteSourcesSql = (AUTH_ENABLED && activeCacheUser)
+    ? 'DELETE FROM sources WHERE id = ? AND user_id = ?'
+    : 'DELETE FROM sources WHERE id = ?';
+  const deleteAssetsSql = (AUTH_ENABLED && activeCacheUser)
+    ? 'DELETE FROM generated_assets WHERE source_id = ? AND user_id = ?'
+    : 'DELETE FROM generated_assets WHERE source_id = ?';
+  const deleteParams = (AUTH_ENABLED && activeCacheUser) ? [sourceId, activeCacheUser] : [sourceId];
+
   await Promise.all([
-    db.runAsync('DELETE FROM sources WHERE id = ? AND user_id = ?', sourceId, activeCacheUser),
-    db.runAsync('DELETE FROM generated_assets WHERE source_id = ? AND user_id = ?', sourceId, activeCacheUser),
+    db.runAsync(deleteSourcesSql, ...deleteParams),
+    db.runAsync(deleteAssetsSql, ...deleteParams),
   ]);
 }

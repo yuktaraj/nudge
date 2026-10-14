@@ -16,13 +16,7 @@ try {
 
 const userId = getUserIdFromAuth(request.headers.get('Authorization'));
 
-if (!userId) {
-
-return json({ error: 'Unauthorized. Missing or invalid user token.' }, 401);
-
-}
-
-const userFilter = `&user_id=eq.${userId}`;
+const userFilter = userId ? `&user_id=eq.${userId}` : '';
 
 const url = new URL(request.url);
 

@@ -34,7 +34,7 @@ export default function ProfileScreen() {
     loadStudyReviewState().then(({ reviewCards, sources }) => {
       const subjects = new Set([
         ...reviewCards.map((card) => card.course),
-        ...sources.map((source) => source.course).filter((course): course is string => Boolean(course)),
+        ...sources.map((source) => source.subject).filter((subject): subject is string => Boolean(subject)),
       ]);
       setAvailableSubjects([...subjects].sort());
     });
@@ -43,7 +43,8 @@ export default function ProfileScreen() {
         setEmail(user.email ?? 'No email found');
         setName(user.user_metadata?.full_name ?? 'Student');
       } else {
-        setEmail('Not logged in');
+        setEmail('demo@nudge.app (Preview Mode)');
+        setName('Demo Student');
       }
     });
   }, []);

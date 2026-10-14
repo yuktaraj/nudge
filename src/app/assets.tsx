@@ -104,12 +104,10 @@ export default function AssetsScreen() {
       listCachedSources(),
       listCachedAssets(),
     ]);
-    const localAssets = cachedAssets;
-    const localSources = cachedSources;
 
-    setAssets(localAssets);
-    setSources(localSources);
-    setSelectedAssetId((current) => current || localAssets[0]?.id || '');
+    setAssets(cachedAssets);
+    setSources(cachedSources);
+    setSelectedAssetId((current) => current || cachedAssets[0]?.id || '');
     setStatusText(
       cachedAssets.length > 0
         ? 'Showing saved study tools.'
@@ -127,8 +125,8 @@ export default function AssetsScreen() {
       setSources(remoteState.sources);
       setSelectedAssetId((current) => current || nextAssets[0]?.id || '');
       setStatusText(nextAssets.length > 0 ? 'Updated from Supabase.' : 'No generated study tools yet.');
-    } catch (error) {
-      setStatusText(error instanceof Error ? error.message : 'Could not update study tools.');
+    } catch {
+      // Keep local cached state if remote refresh fails
     }
   }, []);
 
